@@ -368,74 +368,93 @@ struct MessagePhoto: View {
         }
     }
 }
-let pine = Color(red: 38/255, green: 92/255, blue: 72/255)
-let paper = Color(red: 245/255, green: 245/255, blue: 239/255)
+extension Color {
+    init(rgb: UInt32) { self.init(red: Double((rgb >> 16) & 255)/255, green: Double((rgb >> 8) & 255)/255, blue: Double(rgb & 255)/255) }
+}
+let pine = Color(rgb: 0x176B53)
+let paper = Color(rgb: 0xF0F6F2)
+enum Look {
+    static let ink = Color(rgb: 0x183C32), muted = Color(rgb: 0x6C8278), soft = Color(rgb: 0xE8F3ED)
+    static let gradient = LinearGradient(colors: [pine, Color(rgb: 0x258263)], startPoint: .topLeading, endPoint: .bottomTrailing)
+}
+struct AvatarView: View {
+    let name: String
+    var size: CGFloat = 48
+    var body: some View {
+        let colors: [UInt32] = [0x277B61, 0x5988A3, 0xA77C56, 0x8A78A7, 0x4C9690]
+        let hash = name.utf8.reduce(UInt32(0)) { ($0 &* 31 &+ UInt32($1)) & 0x7fffffff }
+        Text(name.isEmpty ? "Р" : String(name.prefix(2)).uppercased()).font(.system(size: size * 0.32, weight: .semibold, design: .rounded)).foregroundStyle(.white)
+            .frame(width: size, height: size).background(LinearGradient(colors: [Color(rgb: colors[Int(hash) % colors.count]), Color(rgb: 0x96BEA5)], startPoint: .topLeading, endPoint: .bottomTrailing)).clipShape(RoundedRectangle(cornerRadius: size * 0.36, style: .continuous)).accessibilityHidden(true)
+    }
+}
+struct SoftPressStyle: ButtonStyle {
+    var quiet = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(.subheadline, design: .rounded).weight(.semibold)).padding(.horizontal, 18).padding(.vertical, 14).foregroundStyle(quiet ? pine : Color.white).background(quiet ? Look.soft : pine).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)).opacity(configuration.isPressed ? 0.8 : 1).scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1).animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
+    }
+}
 struct LoginView: View {
     @ObservedObject var model: ChatModel
     @State private var username = ""
     @State private var password = ""
     @State private var confirm = ""
     @State private var register = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(register ? "Создать аккаунт" : "С возвращением").font(.largeTitle.bold())
-                Text("Найдите человека по юзернейму и напишите ему.").foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Юзернейм").font(.headline)
-                    TextField("username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
-                    Text("3–24 символа: a–z, 0–9, _").font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 30)).foregroundStyle(Color(rgb: 0xB8DBCD))
+                    Text("Хорошо, когда\nблизкие рядом.").font(.system(size: 34, weight: .semibold, design: .rounded)).foregroundStyle(.white)
+                    Text("Пара слов. Знакомый голос.\nМоменты, которыми хочется делиться.").font(.subheadline).foregroundStyle(Color(rgb: 0xCAE2D8))
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(28).background(LinearGradient(colors: [Color(rgb: 0x103F34), Color(rgb: 0x23745A)], startPoint: .topLeading, endPoint: .bottomTrailing)).clipShape(RoundedRectangle(cornerRadius: 28))
+                Text(register ? "Создать аккаунт" : "С возвращением").font(.system(.title2, design: .rounded).weight(.semibold)).foregroundStyle(Look.ink)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Юзернейм").font(.subheadline.weight(.semibold))
+                    TextField("username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username).padding(14).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    Text("3–24 символа: a–z, 0–9, _").font(.caption2).foregroundStyle(Look.muted)
                 }
-                SecureField("Пароль — от 8 символов", text: $password).textContentType(register ? .newPassword : .password)
-                if register { SecureField("Повторите пароль", text: $confirm).textContentType(.newPassword) }
+                SecureField("Пароль — от 8 символов", text: $password).textContentType(register ? .newPassword : .password).padding(14).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                if register { SecureField("Повторите пароль", text: $confirm).textContentType(.newPassword).padding(14).background(.white, in: RoundedRectangle(cornerRadius: 16)).transition(.move(edge: .top).combined(with: .opacity)) }
                 Button {
                     guard !register || password == confirm else { model.error = "Пароли не совпадают."; return }
                     Task { await model.authenticate(username: username, password: password, register: register); password = ""; confirm = "" }
-                } label: { Text(register ? "Зарегистрироваться" : "Войти").frame(maxWidth: .infinity).padding(.vertical, 9) }
-                .buttonStyle(.borderedProminent).disabled(model.busy)
-                Button(register ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Регистрация") { register.toggle(); password = ""; confirm = ""; model.error = "" }.disabled(model.busy)
-                Text("Запомните пароль: восстановление через почту пока недоступно.").font(.caption).foregroundStyle(.secondary)
-            }.textFieldStyle(.roundedBorder).padding(24)
-        }
+                } label: { Text(register ? "Зарегистрироваться" : "Войти").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()).disabled(model.busy)
+                Button { register.toggle(); password = ""; confirm = ""; model.error = "" } label: { Text(register ? "Уже есть аккаунт? Войти" : "Нет аккаунта? Регистрация").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle(quiet: true)).disabled(model.busy)
+                Text("Сохраните пароль в надёжном месте. Восстановление через почту пока недоступно.").font(.caption2).foregroundStyle(Look.muted)
+            }.padding(20).animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: register)
+        }.scrollDismissesKeyboard(.interactively)
     }
 }
 struct InboxView: View {
     @ObservedObject var model: ChatModel
     @State private var profile: Profile?
     var body: some View {
-        List {
-            Section("Ваш аккаунт") { Text("@\(model.session?.user.username ?? "")").font(.headline) }
-            Section("Найти человека") {
-                HStack {
-                    TextField("@username", text: $model.query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { Task { await model.search() } }
-                    Button("Найти") { Task { await model.search() } }.disabled(model.busy)
-                }
-                ForEach(model.users) { user in Button { profile = user } label: { Label("@\(user.username)", systemImage: "person.crop.circle") } }
-            }
-            Section("Сообщения") {
-                if model.chats.isEmpty { Text("Найдите человека по юзернейму, чтобы начать переписку.").foregroundStyle(.secondary) }
-                ForEach(model.chats) { chat in
-                    Button { model.select(chat); Task { await model.refresh() } } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("@\(chat.username)").font(.headline).foregroundStyle(.primary)
-                                Text(chat.lastText.isEmpty ? "Напишите первое сообщение" : chat.lastText).lineLimit(1).font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if chat.unread > 0 { Text("\(chat.unread)").font(.caption.bold()).padding(7).background(pine).foregroundStyle(.white).clipShape(Circle()) }
-                        }.padding(.vertical, 5)
-                    }.disabled(model.busy)
-                }
-            }
-        }.scrollContentBackground(.hidden)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    AvatarView(name: model.session?.user.username ?? "")
+                    VStack(alignment: .leading, spacing: 4) { Text("@\(model.session?.user.username ?? "")").font(.headline); Text("Ближе, чем кажется").font(.caption).foregroundStyle(Look.muted) }
+                    Spacer()
+                }.padding(.bottom, 10)
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Look.muted)
+                    TextField("Найти по @username", text: $model.query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { Task { await model.search() } }
+                    Button { Task { await model.search() } } label: { Image(systemName: "arrow.right").font(.headline).frame(width: 38, height: 38).foregroundStyle(.white).background(pine, in: RoundedRectangle(cornerRadius: 12)) }.disabled(model.busy).accessibilityLabel("Найти человека")
+                }.padding(10).background(.white, in: RoundedRectangle(cornerRadius: 18))
+                ForEach(model.users) { user in Button { profile = user } label: { row(name: user.username, preview: "Открыть профиль", unread: 0) }.buttonStyle(.plain) }
+                Text("Ваши разговоры").font(.system(.title2, design: .rounded).weight(.semibold)).padding(.top, 18).padding(.bottom, 6)
+                if model.chats.isEmpty { VStack(alignment: .leading, spacing: 10) { Text("Пока тихо").font(.title3.weight(.medium)); Text("Найдите близкого человека и начните первый разговор.").font(.subheadline).foregroundStyle(Look.muted) }.padding(.vertical, 32) }
+                ForEach(model.chats) { chat in Button { model.select(chat); Task { await model.refresh() } } label: { row(name: chat.username, preview: chat.lastText.isEmpty ? "Напишите первое сообщение" : chat.lastText, unread: chat.unread) }.buttonStyle(.plain).disabled(model.busy) }
+            }.padding(20).foregroundStyle(Look.ink)
+        }.scrollDismissesKeyboard(.interactively)
         .sheet(item: $profile) { p in
-            VStack(spacing: 24) {
-                Image(systemName: "person.crop.circle.fill").font(.system(size: 72)).foregroundStyle(pine)
-                Text("@\(p.username)").font(.title.bold())
-                Button("Написать") { profile = nil; Task { await model.open(p) } }.buttonStyle(.borderedProminent)
-                Button("Закрыть") { profile = nil }
-            }.padding(28).presentationDetents([.medium])
+            VStack(spacing: 22) { AvatarView(name: p.username, size: 92); Text("@\(p.username)").font(.title2.weight(.semibold)); Text("Начните ваш разговор").foregroundStyle(Look.muted); Button { profile = nil; Task { await model.open(p) } } label: { Label("Написать", systemImage: "bubble.left").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()); Button("Закрыть") { profile = nil } }.padding(32).presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
+    }
+    private func row(name: String, preview: String, unread: Int) -> some View {
+        HStack(spacing: 14) { AvatarView(name: name); VStack(alignment: .leading, spacing: 6) { Text("@\(name)").font(.subheadline.weight(.semibold)).lineLimit(1); Text(preview).font(.caption).foregroundStyle(Look.muted).lineLimit(1) }; Spacer(minLength: 4); if unread > 0 { Text(unread > 99 ? "99+" : "\(unread)").font(.caption2.bold()).padding(.horizontal, 7).padding(.vertical, 5).foregroundStyle(.white).background(pine, in: Capsule()) } }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 22)).contentShape(RoundedRectangle(cornerRadius: 22))
     }
 }
 struct ConversationView: View {
@@ -446,6 +465,7 @@ struct ConversationView: View {
     @State private var gallery = false
     @State private var camera = false
     @State private var pickerChat: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func picked(_ result: Result<Data, Error>?) {
         gallery = false; camera = false
         guard pickerChat == model.selected?.id, let result else { return }
@@ -462,10 +482,11 @@ struct ConversationView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 12) { AvatarView(name: model.selected?.username ?? "", size: 40); VStack(alignment: .leading, spacing: 3) { Text("@\(model.selected?.username ?? "")").font(.subheadline.weight(.semibold)); Text("Личная переписка").font(.caption2).foregroundStyle(Look.muted) }; Spacer() }.padding(.horizontal, 20).padding(.vertical, 12).background(.white)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        if model.messages.isEmpty { Text("Напишите первое сообщение.").foregroundStyle(.secondary).padding(.top, 40) }
+                        if model.messages.isEmpty { VStack(spacing: 10) { Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 36)).foregroundStyle(pine); Text("Скажите «привет»").font(.title2.weight(.semibold)); Text("И начнётся ваш разговор").font(.subheadline).foregroundStyle(Look.muted) }.frame(maxWidth: .infinity).padding(.top, 70) }
                         ForEach(model.messages) { m in
                             let own = m.sender == model.session?.user.id
                             HStack {
@@ -478,14 +499,14 @@ struct ConversationView: View {
                                         }.buttonStyle(.plain).disabled(audio.capturing).padding(.vertical, 8)
                                     }
                                     if !m.text.isEmpty { Text(m.text).textSelection(.enabled) }
-                                    Text(Date(timeIntervalSince1970: m.at / 1000), format: .dateTime.day().month().hour().minute()).font(.caption2).opacity(0.7)
+                                    Text(Date(timeIntervalSince1970: m.at / 1000), format: .dateTime.hour().minute()).font(.caption2).opacity(0.7)
                                     if own { Text(model.peerRead >= m.seq ? "Прочитано" : "Отправлено").font(.caption2).opacity(0.7) }
-                                }.padding(14).background(own ? pine : Color.white).foregroundStyle(own ? Color.white : Color.primary).clipShape(RoundedRectangle(cornerRadius: 16))
+                                }.padding(15).background { if own { Look.gradient } else { Color.white } }.foregroundStyle(own ? Color.white : Look.ink).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                                 if !own { Spacer(minLength: 38) }
-                            }.id(m.seq)
+                            }.id(m.seq).transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-                    }.padding(16)
-                }.onChange(of: model.messages.count) { _ in if let last = model.messages.last { proxy.scrollTo(last.seq, anchor: .bottom) } }
+                    }.padding(18).animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: model.messages.count)
+                }.onChange(of: model.messages.count) { _ in if let last = model.messages.last { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo(last.seq, anchor: .bottom) } } }
             }
             if let data = model.photo, let image = UIImage(data: data) {
                 HStack {
@@ -509,15 +530,15 @@ struct ConversationView: View {
                 Menu {
                     Button { pickerChat = model.selected?.id; gallery = true } label: { Label("Фото из галереи", systemImage: "photo") }
                     Button { openCamera() } label: { Label("Снять на камеру", systemImage: "camera") }
-                } label: { Image(systemName: "plus").font(.title2).padding(12) }.disabled(model.busy || audio.capturing || model.voice != nil).accessibilityLabel("Прикрепить фотографию")
-                TextField("Сообщение…", text: $model.draft, axis: .vertical).lineLimit(1...5).padding(12).background(Color.white).clipShape(RoundedRectangle(cornerRadius: 12))
+                } label: { Image(systemName: "plus").font(.system(size: 21, weight: .medium)).frame(width: 40, height: 44) }.disabled(model.busy || audio.capturing || model.voice != nil).accessibilityLabel("Прикрепить фотографию")
+                TextField("Сообщение…", text: $model.draft, axis: .vertical).lineLimit(1...5).padding(.vertical, 12)
                 Button {
                     if audio.capturing { audio.finish(save: true) }
                     else { let chat = model.selected?.id; audio.start { result in guard model.selected?.id == chat else { return }; do { model.voice = try result.get() } catch { model.error = error.localizedDescription } } }
-                } label: { Image(systemName: audio.capturing ? "stop.circle.fill" : "mic.fill").font(.title2).padding(8) }
+                } label: { Image(systemName: audio.capturing ? "stop.circle.fill" : "mic").font(.system(size: 21)).frame(width: 38, height: 44) }
                 .disabled(model.busy || model.photo != nil || model.voice != nil).accessibilityLabel(audio.capturing ? "Остановить запись" : "Записать голосовое")
-                Button { audio.stopPlayback(); Task { await model.send() } } label: { Image(systemName: "arrow.up").font(.title2).padding(12) }.buttonStyle(.borderedProminent).disabled(model.busy || audio.capturing || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.photo == nil && model.voice == nil)).accessibilityLabel("Отправить")
-            }.padding(12)
+                Button { audio.stopPlayback(); Task { await model.send() } } label: { Image(systemName: "arrow.up").font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44).foregroundStyle(.white).background(Look.gradient, in: RoundedRectangle(cornerRadius: 15)) }.buttonStyle(.plain).disabled(model.busy || audio.capturing || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.photo == nil && model.voice == nil)).accessibilityLabel("Отправить")
+            }.padding(7).background(.white, in: RoundedRectangle(cornerRadius: 22)).padding(.horizontal, 12).padding(.vertical, 10)
         }.sheet(isPresented: $gallery) { GalleryPicker(completion: picked).ignoresSafeArea() }
         .fullScreenCover(isPresented: $camera) { CameraPicker(completion: picked).ignoresSafeArea() }
         .onChange(of: calls.busy) { if $0 { audio.stopPlayback() } }
@@ -564,14 +585,14 @@ struct ContentView: View {
                 if !model.error.isEmpty {
                     HStack { Text(model.error).font(.footnote).foregroundStyle(.red); Spacer(); Button { model.error = "" } label: { Image(systemName: "xmark") } }.padding(12).background(Color.white)
                 }
-                Text("На iPhone уведомления доступны, пока «Рядом» открыт.").font(.caption2).foregroundStyle(.secondary).padding(.bottom, 6)
-            }.background(paper).navigationTitle(model.selected.map { "@\($0.username)" } ?? "Рядом.").navigationBarTitleDisplayMode(.inline)
+                if model.selected == nil && model.session != nil { Text("Уведомления доступны, пока приложение открыто").font(.caption2).foregroundStyle(Look.muted).padding(.bottom, 6) }
+            }.background(paper).navigationTitle(model.selected == nil ? "Рядом" : "Разговор").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let chat = model.selected { ToolbarItem(placement: .navigationBarTrailing) { Button { calls.dial(chat.username) } label: { Image(systemName: "phone.fill") }.disabled(model.busy || model.recording || calls.busy).accessibilityLabel("Позвонить") } }
                 if model.selected != nil { ToolbarItem(placement: .navigationBarLeading) { Button("Назад") { model.select(nil) }.disabled(model.busy || model.recording) } }
                 else if model.session != nil { ToolbarItem(placement: .navigationBarLeading) { Button { LocalNotices.shared.settings() } label: { Image(systemName: "bell") }.accessibilityLabel("Уведомления") }; ToolbarItem(placement: .navigationBarTrailing) { Button("Выйти") { model.error = ""; logoutPrompt = true }.disabled(model.busy) } }
             }
-        }.tint(pine)
+        }.tint(pine).preferredColorScheme(.light)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.selected?.id)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.session?.user.id)
         // Restart with fresh scene/account/chat state instead of capturing the launch phase forever.

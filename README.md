@@ -4,9 +4,9 @@
 
 ## Содержимое
 
-- `windows/` — приложение Windows; версия 2.5.2 исправляет исчезновение окна звонка при ограничении частоты вызовов и добавляет повторный вызов с отсчётом.
-- `android/` — Android 2.5.1 с обработкой эха и сервисом уведомлений.
-- `ios/` — iPhone 2.5.0; IPA нужно подписать для своего устройства.
+- `windows/` — Windows 2.6.0: новое оформление и анимации; сохранено исправление повторных звонков с отсчётом при ограничении частоты.
+- `android/` — Android 2.6.0: новое оформление, обработка эха и сервис уведомлений.
+- `ios/` — iPhone 2.6.0: новое оформление и анимации; IPA нужно подписать для своего устройства.
 - `server-relay/` — шлюз HTTP API и сервер передачи звука WebSocket. Лимит вызовов: 12 попыток на аккаунт за скользящую минуту, с оставшимся временем ожидания в ответе.
 - `.github/workflows/` — сборка EXE, APK и неподписанного IPA.
 
@@ -17,6 +17,8 @@
 Windows: установите .NET Framework 4.8 Developer Pack и Windows SDK, выполните `powershell -ExecutionPolicy Bypass -File windows/build.ps1`. Результат: `windows/build/Ryadom.exe`.
 
 Проверка звонков Windows: `npm ci --prefix server-relay`, затем `powershell -ExecutionPolicy Bypass -File windows/test-calls.ps1`. Нужен Node.js 24. Проверки используют искусственный звук и не включают микрофон.
+
+Предпросмотр оформления Windows: `windows/preview-design.ps1` после сборки. Создаёт PNG входа и переписки на вымышленных данных без запуска основного приложения. Подробнее: [DESIGN-RU.md](DESIGN-RU.md).
 
 Android: Android SDK 35, JDK 17+, `bash android/build.sh`, либо Actions → Build Android APK → Run workflow. Результат: `android/build/Ryadom-Android.apk`. Самостоятельная сборка создаёт свой тестовый ключ. Она не обновляет поверх официального APK с другой подписью; ключ официальных сборок хранится отдельно. Этот публичный workflow не загружает и не сохраняет кеш официальной подписи.
 

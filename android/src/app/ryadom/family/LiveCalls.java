@@ -96,13 +96,13 @@ final class LiveCalls {
  void show(){
   if(dialog==null){
    LinearLayout panel=new LinearLayout(activity);panel.setOrientation(LinearLayout.VERTICAL);int pad=(int)(24*activity.getResources().getDisplayMetrics().density);panel.setPadding(pad,pad,pad,pad);
-   label=new TextView(activity);label.setTextSize(23);panel.addView(label);
-   accept=new Button(activity);accept.setText("Принять");accept.setOnClickListener(v->answer());panel.addView(accept);
-   mute=new Button(activity);mute.setOnClickListener(v->{muted=!muted;Audio target=audio;if(target!=null)target.muted=muted;update();});panel.addView(mute);
-   route=new Button(activity);route.setOnClickListener(v->{speaker=!speaker;Audio target=audio;if(target!=null){final boolean selected=speaker;audioOperations.execute(()->{if(audio==target&&!target.stopped)target.speaker(selected);});}update();});panel.addView(route);
-   Button finish=new Button(activity);finish.setText("Завершить");finish.setOnClickListener(v->hangup());panel.addView(finish);
-   TextView hint=new TextView(activity);hint.setText("Звонок работает, пока «Рядом» открыт на обоих устройствах.");panel.addView(hint);
-   dialog=new AlertDialog.Builder(activity).setView(panel).setCancelable(false).create();dialog.show();ui.post(clock);
+   TextView eyebrow=Ui.text(activity,"ГОЛОСОВОЙ ЗВОНОК",11,Ui.MUTED);eyebrow.setGravity(android.view.Gravity.CENTER);panel.addView(eyebrow);TextView avatar=Ui.avatar(activity,peer,88);LinearLayout.LayoutParams av=new LinearLayout.LayoutParams(Ui.dp(activity,88),Ui.dp(activity,88));av.gravity=android.view.Gravity.CENTER;av.setMargins(0,Ui.dp(activity,28),0,Ui.dp(activity,20));panel.addView(avatar,av);label=Ui.text(activity,"",23,Ui.INK);label.setGravity(android.view.Gravity.CENTER);label.setTypeface(android.graphics.Typeface.create("sans-serif-medium",0));panel.addView(label);
+   accept=Ui.button(activity,"Принять",v->answer(),false);panel.addView(accept);
+   mute=Ui.button(activity,"Микрофон",v->{},true);mute.setOnClickListener(v->{muted=!muted;Audio target=audio;if(target!=null)target.muted=muted;update();});panel.addView(mute);
+   route=Ui.button(activity,"Динамик",v->{},true);route.setOnClickListener(v->{speaker=!speaker;Audio target=audio;if(target!=null){final boolean selected=speaker;audioOperations.execute(()->{if(audio==target&&!target.stopped)target.speaker(selected);});}update();});panel.addView(route);
+   Button finish=Ui.button(activity,"Завершить",v->hangup(),false);finish.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xffc65b60));panel.addView(finish);
+   TextView hint=Ui.text(activity,"",12,Ui.MUTED);hint.setPadding(0,Ui.dp(activity,18),0,0);hint.setGravity(android.view.Gravity.CENTER);hint.setText("Звонок работает, пока «Рядом» открыт на обоих устройствах.");panel.addView(hint);
+   dialog=new AlertDialog.Builder(activity).setView(panel).setCancelable(false).create();dialog.show();Ui.dialog(dialog,panel);ui.post(clock);
    activity.setVolumeControlStream(AudioManager.STREAM_VOICE_CALL);
    activity.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
   }update();

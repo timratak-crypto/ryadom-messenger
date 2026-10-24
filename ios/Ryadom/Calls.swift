@@ -221,22 +221,29 @@ final class CallAudioEngine {
 
 struct CallView: View {
     @ObservedObject var calls: CallsModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
     var body: some View {
-        VStack(spacing: 28) {
-            Image(systemName: "person.crop.circle.fill").font(.system(size: 84)).foregroundStyle(pine)
-            Text("@\(calls.peer)").font(.title.bold())
-            if calls.phase == "active" { Text(calls.started, style: .timer).font(.title2).monospacedDigit() }
-            else { Text(calls.phase == "incoming" ? "Входящий звонок" : calls.phase == "ringing" ? "Вызываем…" : "Подключаемся…").font(.title2) }
-            if calls.phase == "incoming" { Button { calls.accept() } label: { Label("Принять", systemImage: "phone.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent) }
+        VStack(spacing: 24) {
+            Text("ГОЛОСОВОЙ ЗВОНОК").font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(Color.white.opacity(0.65)).padding(.top, 30)
+            Spacer()
+            ZStack { Circle().stroke(Color.white.opacity(0.10), lineWidth: 1).frame(width: 188, height: 188).scaleEffect(pulse && !reduceMotion ? 1.08 : 1); Circle().fill(Color.white.opacity(0.06)).frame(width: 154, height: 154); AvatarView(name: calls.peer, size: 110) }
+            Text("@\(calls.peer)").font(.system(.largeTitle, design: .rounded).weight(.semibold)).foregroundStyle(.white)
+            if calls.phase == "active" { Text(calls.started, style: .timer).font(.title2).monospacedDigit().foregroundStyle(Color(rgb: 0xB8DBCD)) }
+            else { Text(calls.phase == "incoming" ? "Входящий звонок" : calls.phase == "ringing" ? "Вызываем…" : "Подключаемся…").font(.title3).foregroundStyle(Color(rgb: 0xB8DBCD)) }
+            Spacer()
+            if calls.phase == "incoming" { Button { calls.accept() } label: { Label("Принять", systemImage: "phone.fill").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()) }
             if calls.phase == "active" {
-                Button { calls.toggleMute() } label: { Label(calls.muted ? "Включить микрофон" : "Выключить микрофон", systemImage: calls.muted ? "mic.slash.fill" : "mic.fill") }
-                Button { calls.toggleSpeaker() } label: { Label(calls.speaker ? "Громкая связь: вкл." : "Громкая связь: выкл.", systemImage: "speaker.wave.2.fill") }
+                HStack(spacing: 14) {
+                    Button { calls.toggleMute() } label: { VStack(spacing: 10) { Image(systemName: calls.muted ? "mic.slash" : "mic").font(.title2); Text(calls.muted ? "Микрофон выкл." : "Микрофон вкл.").font(.caption2) }.frame(maxWidth: .infinity).padding(18).background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22)) }
+                    Button { calls.toggleSpeaker() } label: { VStack(spacing: 10) { Image(systemName: calls.speaker ? "speaker.wave.2.fill" : "speaker").font(.title2); Text(calls.speaker ? "Громкая связь" : "Динамик").font(.caption2) }.frame(maxWidth: .infinity).padding(18).background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22)) }
+                }.buttonStyle(.plain).foregroundStyle(.white)
             }
-            Button(role: .destructive) { calls.hangup() } label: { Label("Завершить", systemImage: "phone.down.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).tint(.red)
-            if !calls.note.isEmpty { Text(calls.note).font(.footnote).foregroundStyle(.red) }
-            Text("Оставьте «Рядом» открытым на обоих устройствах во время звонка.").font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity).background(paper).tint(pine)
-        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+            Button { calls.hangup() } label: { Label("Завершить", systemImage: "phone.down.fill").font(.headline).frame(maxWidth: .infinity).padding(18).foregroundStyle(.white).background(Color(rgb: 0xC65B60), in: RoundedRectangle(cornerRadius: 20)) }.buttonStyle(.plain)
+            if !calls.note.isEmpty { Text(calls.note).font(.footnote).foregroundStyle(.white) }
+            Text("Оставьте приложение открытым во время звонка").font(.caption2).foregroundStyle(Color.white.opacity(0.5)).multilineTextAlignment(.center)
+        }.padding(28).background(LinearGradient(colors: [Color(rgb: 0x123D33), Color(rgb: 0x092A23)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).tint(pine)
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true; if !reduceMotion { withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { pulse = true } } }
         .interactiveDismissDisabled()
     }
 }

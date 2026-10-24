@@ -111,7 +111,7 @@ namespace Ryadom {
   readonly CallSession callSession=new CallSession();
   string callId {get{return callSession.Id;}} string callState {get{return callSession.State;}} string callPeer {get{return callSession.Peer;}}
   Task audioWorker;uint callOutputDevice=uint.MaxValue;
-  Window callWindow; TextBlock callLabel; Button callAccept,callMute,callRetry,callEnd; DispatcherTimer callClock; DateTime callStart;
+  Window callWindow; Border callAvatar; TextBlock callLabel; Button callAccept,callMute,callRetry,callEnd; DispatcherTimer callClock; DateTime callStart;
   void EnsureCalls(){
    string token=session==null?null:session.token;if(token==callToken&&calls!=null)return;
    StopCalls();if(token==null)return;callToken=token;var socket=new CallSocket();calls=socket;
@@ -152,8 +152,11 @@ namespace Ryadom {
   }
   void ShowCall(){
    if(callWindow==null){
-    callWindow=new Window{Owner=w,Title="Звонок · Рядом",Width=390,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=new SolidColorBrush(Color.FromRgb(245,245,239))};
-    var panel=new StackPanel{Margin=new Thickness(26)};callLabel=new TextBlock{FontSize=22,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,20)};panel.Children.Add(callLabel);
+    callWindow=new Window{Owner=w,Title="Звонок · Рядом",Width=430,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=new SolidColorBrush(Color.FromRgb(245,245,239))};
+    StyleDialog(callWindow);var panel=new StackPanel{Margin=new Thickness(32)};
+    var eyebrow=Design.Text("ГОЛОСОВОЙ ЗВОНОК",10,Design.Muted);eyebrow.HorizontalAlignment=HorizontalAlignment.Center;eyebrow.Margin=new Thickness(0,0,0,26);panel.Children.Add(eyebrow);
+    callAvatar=Design.Avatar(callPeer,92);callAvatar.HorizontalAlignment=HorizontalAlignment.Center;callAvatar.Margin=new Thickness(0,0,0,22);panel.Children.Add(callAvatar);
+    callLabel=new TextBlock{TextAlignment=TextAlignment.Center,LineHeight=32,FontWeight=FontWeights.SemiBold,FontSize=22,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,20)};panel.Children.Add(callLabel);
     panel.Children.Add(new TextBlock{Text="Динамик",Margin=new Thickness(0,0,0,4)});
     var outputs=new ComboBox{Margin=new Thickness(0,0,0,14),Padding=new Thickness(8)};outputs.Items.Add("По умолчанию в Windows");foreach(var name in CallAudio.Outputs())outputs.Items.Add(name);outputs.SelectedIndex=callOutputDevice==uint.MaxValue?0:(int)callOutputDevice+1;if(outputs.SelectedIndex<0)outputs.SelectedIndex=0;
     outputs.SelectionChanged+=(a,b)=>{callOutputDevice=outputs.SelectedIndex<=0?uint.MaxValue:(uint)(outputs.SelectedIndex-1);if(callState=="active")StartCallAudio();};panel.Children.Add(outputs);
@@ -162,10 +165,11 @@ namespace Ryadom {
     callRetry=new Button{Content="Позвонить снова",Padding=new Thickness(12),Margin=new Thickness(0,0,0,12)};callRetry.Click+=(a,b)=>DialCall(callPeer);panel.Children.Add(callRetry);
     callEnd=new Button{Content="Завершить",Padding=new Thickness(12),Background=Brushes.Firebrick,Foreground=Brushes.White};callEnd.Click+=(a,b)=>Hangup();panel.Children.Add(callEnd);
     panel.Children.Add(new TextBlock{Text="Для чистого звука используйте наушники.\nНа телефоне приложение должно быть открыто.",FontSize=12,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,18,0,0)});
-    callWindow.Content=panel;var shownWindow=callWindow;
+    callWindow.Content=panel;Design.Enter(panel,16);var shownWindow=callWindow;
     shownWindow.Closing+=(a,b)=>{if(callWindow==shownWindow){SendHangup();EndCall("",false,false);}};shownWindow.Show();
     callClock=new DispatcherTimer{Interval=TimeSpan.FromSeconds(1)};callClock.Tick+=(a,b)=>UpdateCallLabel();callClock.Start();
    }
+   if(callAvatar!=null){((TextBlock)callAvatar.Child).Text=string.IsNullOrEmpty(callPeer)?"Р":callPeer.Substring(0,Math.Min(2,callPeer.Length)).ToUpperInvariant();Design.Pulse(callAvatar,callState=="incoming"||callState=="ringing");}
    callAccept.Visibility=callState=="incoming"?Visibility.Visible:Visibility.Collapsed;callMute.Visibility=callState=="active"?Visibility.Visible:Visibility.Collapsed;UpdateCallLabel();
   }
   void UpdateCallLabel(){
@@ -186,7 +190,7 @@ namespace Ryadom {
    // The rate deadline applies to the account even if its result window is dismissed.
    callSession.Finish(message);
    if(callClock!=null)callClock.Stop();callClock=null;
-   var window=callWindow;callWindow=null;callLabel=null;callAccept=null;callMute=null;callRetry=null;callEnd=null;
+   var window=callWindow;callWindow=null;Design.Pulse(callAvatar,false);callAvatar=null;callLabel=null;callAccept=null;callMute=null;callRetry=null;callEnd=null;
    if(closeWindow&&window!=null)window.Close();if(message.Length>0)Status(message);
   }
  }

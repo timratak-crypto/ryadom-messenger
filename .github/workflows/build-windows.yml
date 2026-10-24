@@ -28,6 +28,15 @@ jobs:
       - name: Test call lifecycle and native transport without recording
         shell: powershell
         run: ./windows/test-calls.ps1
+      - name: Render synthetic UI previews without opening the messenger
+        shell: powershell
+        run: ./windows/preview-design.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ryadom-Design-Preview
+          path: windows/build/design-preview/*.png
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: Ryadom-Windows-EXE

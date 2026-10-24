@@ -60,7 +60,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
- private static final int PINE=Color.rgb(38,92,72),PAPER=Color.rgb(245,245,239),INK=Color.rgb(33,58,50),MUTED=Color.rgb(102,118,108);
+ private static final int PINE=Ui.ACCENT,PAPER=Ui.PAPER,INK=Ui.INK,MUTED=Ui.MUTED;
  private static final String SERVER="https://ryadom-family-chat.onrender.com",KEY_ALIAS="ryadom.account.v2";
  private final Handler ui=new Handler(Looper.getMainLooper());
  private final ExecutorService images=Executors.newFixedThreadPool(2);
@@ -95,6 +95,7 @@ public class MainActivity extends Activity {
  private Button authButton,searchButton,sendButton;
  private boolean active,busy,polling,register,sessionLoaded;
  private long cursor,peerRead;
+ private String inboxAppearance="",messageDay="";
  private String searchText="",retryText="",retryId="",retryChat="";
  private final Runnable ticker=new Runnable(){public void run(){if(active){refresh();ui.postDelayed(this,3000);}}};
  static class ApiError extends Exception {final int code;ApiError(int c,String m){super(m);code=c;}}
@@ -118,8 +119,16 @@ public class MainActivity extends Activity {
  private TextView text(String v,int size,int color){TextView t=new TextView(this);t.setText(v);t.setTextSize(size);t.setTextColor(color);return t;}
  private GradientDrawable bg(int color,int radius){GradientDrawable g=new GradientDrawable();g.setColor(color);g.setCornerRadius(dp(radius));return g;}
  private void gap(LinearLayout p,int h){p.addView(new View(this),lp(1,dp(h)));}
- private Button button(String label,View.OnClickListener action){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setBackgroundTintList(ColorStateList.valueOf(PINE));b.setOnClickListener(action);return b;}
- private EditText input(String hint,int max,boolean secret){EditText e=new EditText(this);e.setTextSize(16);e.setTextColor(INK);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(12),dp(10),dp(12),dp(10));e.setBackground(bg(Color.WHITE,12));e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});e.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));e.setSingleLine(true);return e;}
+ private Button button(String label,View.OnClickListener action){return Ui.button(this,label,action,false);}
+ private Button quiet(String label,View.OnClickListener action){return Ui.button(this,label,action,true);}
+ private TextView heading(String label,int size){TextView t=text(label,size,INK);t.setTypeface(Typeface.create("sans-serif-medium",0));return t;}
+ private View contact(JSONObject person,boolean search){
+  String name=person.optString("username");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(14),dp(15),dp(14),dp(15));row.setBackground(new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x2248a880),bg(Color.WHITE,20),null));row.setClickable(true);row.setFocusable(true);row.addView(Ui.avatar(this,name,48));
+  LinearLayout copy=column();copy.setPadding(dp(14),0,dp(8),0);TextView who=heading("@"+name,16);who.setSingleLine();who.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(who);String preview=search?"Открыть профиль":person.optString("lastText");TextView sub=text(preview.isEmpty()?"Напишите первое сообщение":preview,13,MUTED);sub.setSingleLine();sub.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(sub);row.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
+  int unread=person.optInt("unread");if(unread>0){TextView badge=text(unread>99?"99+":String.valueOf(unread),11,Color.WHITE);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(7),dp(4),dp(7),dp(4));badge.setBackground(bg(PINE,10));row.addView(badge);}
+  row.setOnClickListener(v->{if(busy)return;if(search)new AlertDialog.Builder(this).setTitle("@"+name).setMessage("Начните ваш разговор").setPositiveButton("Написать",(d,w)->open(person)).setNegativeButton("Закрыть",null).show();else{select(person);refresh();}});return row;
+ }
+ private EditText input(String hint,int max,boolean secret){EditText e=new EditText(this);e.setTextSize(16);e.setTextColor(INK);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(12),dp(10),dp(12),dp(10));GradientDrawable surface=bg(Color.WHITE,16);surface.setStroke(dp(1),0xffdce8e2);e.setBackground(surface);e.setMinimumHeight(dp(48));e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});e.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));e.setSingleLine(true);return e;}
  private void syncCalls(){if(calls!=null)calls.sync(session==null?null:session.optString("token"),active);NotificationService.visible(active,selected==null?null:selected.optString("id"));syncNotifications();}
  private void syncNotifications(){
   if(!active||!sessionLoaded||session==null)return;
@@ -138,48 +147,40 @@ public class MainActivity extends Activity {
  }
  private void screen(){
   syncCalls();
-  chatList=null;searchResults=null;messageList=null;receipts.clear();authButton=null;searchButton=null;sendButton=null;micButton=null;attachment=null;recordingLabel=null;
+  inboxAppearance="";messageDay="";chatList=null;searchResults=null;messageList=null;receipts.clear();authButton=null;searchButton=null;sendButton=null;micButton=null;attachment=null;recordingLabel=null;
   root=column();root.setBackgroundColor(PAPER);root.setPadding(dp(18),dp(12),dp(18),dp(8));
   root.setOnApplyWindowInsetsListener((v,i)->{v.setPadding(dp(18)+i.getSystemWindowInsetLeft(),dp(12)+i.getSystemWindowInsetTop(),dp(18)+i.getSystemWindowInsetRight(),dp(8)+i.getSystemWindowInsetBottom());return i;});
-  setContentView(root);root.requestApplyInsets();title=text(selected==null?"Рядом.":"@"+selected.optString("username"),28,INK);title.setTypeface(null,Typeface.BOLD);root.addView(title);gap(root,8);
+  setContentView(root);root.requestApplyInsets();title=heading("Рядом",30);if(selected==null){root.addView(title);TextView tagline=text("Ближе, чем кажется",12,MUTED);root.addView(tagline);gap(root,20);}
   status=text("",12,MUTED);
   if(session==null)authScreen();else if(selected==null)inboxScreen();else conversationScreen();
-  if(android.os.Build.VERSION.SDK_INT<26||ValueAnimator.areAnimatorsEnabled()){root.setAlpha(0f);root.animate().alpha(1f).setDuration(180).start();}
-  root.addView(status);root.addView(text("Уведомления настраиваются в списке переписок.",11,MUTED));updateButtons();
+  Ui.enter(root,12);
+  status.setPadding(dp(4),dp(6),dp(4),0);root.addView(status);updateButtons();
  }
  private void authScreen(){
-  ScrollView scroll=new ScrollView(this);LinearLayout form=column();scroll.addView(form);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-  gap(form,24);form.addView(text(register?"Создать аккаунт":"С возвращением",27,INK));gap(form,12);form.addView(text("Найдите человека по юзернейму и напишите ему.",16,MUTED));gap(form,24);
-  form.addView(text("Юзернейм",14,INK));username=input("username",25,false);form.addView(username);form.addView(text("3–24 символа: a–z, 0–9, _",12,MUTED));gap(form,16);
-  password=input("Пароль — от 8 символов",128,true);form.addView(password);gap(form,12);
-  confirm=input("Повторите пароль",128,true);if(register){form.addView(confirm);gap(form,12);}
-  authButton=button(register?"Зарегистрироваться":"Войти",v->authenticate());form.addView(authButton);
-  form.addView(button(register?"Уже есть аккаунт? Войти":"Нет аккаунта? Регистрация",v->{if(busy)return;register=!register;screen();}));gap(form,16);
-  form.addView(text("Запомните пароль: восстановление через почту пока недоступно.",12,MUTED));
+  ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);LinearLayout form=column();scroll.addView(form);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+  LinearLayout hero=column();hero.setPadding(dp(24),dp(26),dp(24),dp(26));hero.setBackground(Ui.gradient(this,0xff103f34,0xff23745a,26));TextView big=heading("Хорошо, когда\nблизкие рядом.",30);big.setTextColor(Color.WHITE);hero.addView(big);gap(hero,12);hero.addView(text("Пара слов. Знакомый голос.\nМоменты, которыми хочется делиться.",14,0xffcbe4d8));form.addView(hero);gap(form,26);
+  form.addView(heading(register?"Создать аккаунт":"С возвращением",25));gap(form,18);form.addView(heading("Юзернейм",13));gap(form,6);username=input("username",25,false);form.addView(username);gap(form,5);form.addView(text("3–24 символа: a–z, 0–9, _",11,MUTED));gap(form,18);
+  password=input("Пароль — от 8 символов",128,true);form.addView(password);gap(form,12);confirm=input("Повторите пароль",128,true);if(register){form.addView(confirm);gap(form,12);}
+  authButton=button(register?"Зарегистрироваться":"Войти",v->authenticate());form.addView(authButton,lp(-1,dp(50)));gap(form,10);form.addView(quiet(register?"Уже есть аккаунт? Войти":"Нет аккаунта? Регистрация",v->{if(busy)return;register=!register;screen();}),lp(-1,dp(48)));gap(form,18);form.addView(text("Сохраните пароль в надёжном месте. Восстановление через почту пока недоступно.",11,MUTED));gap(form,12);
  }
  private void inboxScreen(){
-  root.addView(button("Уведомления",v->notificationSettings()));
-  LinearLayout me=new LinearLayout(this);me.setGravity(Gravity.CENTER_VERTICAL);me.addView(text("@"+session.optJSONObject("user").optString("username"),15,INK),new LinearLayout.LayoutParams(0,-2,1));me.addView(button("Выйти",v->logout()));root.addView(me);
-  query=input("@username",25,false);query.setText(searchText);root.addView(query);searchButton=button("Найти человека",v->search());root.addView(searchButton);
-  ScrollView scroll=new ScrollView(this);LinearLayout content=column();scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-  searchResults=column();content.addView(searchResults);gap(content,12);content.addView(text("Сообщения",23,INK));gap(content,8);chatList=column();content.addView(chatList);renderInbox();renderSearch();
+  LinearLayout me=new LinearLayout(this);me.setGravity(Gravity.CENTER_VERTICAL);me.addView(Ui.avatar(this,session.optJSONObject("user").optString("username"),42));TextView name=heading("@"+session.optJSONObject("user").optString("username"),15);name.setPadding(dp(12),0,0,0);me.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button settings=quiet("•••",v->{android.widget.PopupMenu menu=new android.widget.PopupMenu(this,v);menu.getMenu().add("Уведомления");menu.getMenu().add("Выйти");menu.setOnMenuItemClickListener(item->{if(item.getTitle().equals("Выйти"))logout();else notificationSettings();return true;});menu.show();});settings.setContentDescription("Настройки аккаунта");me.addView(settings,lp(dp(48),dp(48)));root.addView(me);gap(root,20);
+  LinearLayout search=new LinearLayout(this);search.setGravity(Gravity.CENTER_VERTICAL);query=input("Найти по @username",25,false);query.setText(searchText);search.addView(query,new LinearLayout.LayoutParams(0,dp(50),1));searchButton=Ui.icon(this,"search","Найти человека",v->search(),false);LinearLayout.LayoutParams searchSize=lp(dp(48),dp(48));searchSize.leftMargin=dp(8);search.addView(searchButton,searchSize);root.addView(search);gap(root,18);
+  ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);LinearLayout content=column();scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));searchResults=column();content.addView(searchResults);content.addView(heading("Ваши разговоры",23));gap(content,12);chatList=column();content.addView(chatList);renderInbox();renderSearch();
  }
- private void renderSearch(){if(searchResults==null)return;searchResults.removeAllViews();for(int i=0;i<users.length();i++){JSONObject p=users.optJSONObject(i);searchResults.addView(button("@"+p.optString("username")+" · Профиль",v->{if(busy)return;new AlertDialog.Builder(this).setTitle("@"+p.optString("username")).setMessage("Личная переписка").setPositiveButton("Написать",(d,w)->open(p)).setNegativeButton("Закрыть",null).show();}));}}
+ private void renderSearch(){if(searchResults==null)return;searchResults.removeAllViews();for(int i=0;i<users.length();i++){searchResults.addView(contact(users.optJSONObject(i),true),lp(-1,-2));gap(searchResults,8);}if(users.length()>0)gap(searchResults,12);}
  private void renderInbox(){
-  if(chatList==null)return;chatList.removeAllViews();
-  if(chats.length()==0)chatList.addView(text("Найдите человека по юзернейму, чтобы начать переписку.",16,MUTED));
-  for(int i=0;i<chats.length();i++){JSONObject c=chats.optJSONObject(i);String preview=c.optString("lastText");if(preview.length()>60)preview=preview.substring(0,60)+"…";Button row=button("@"+c.optString("username")+(c.optInt("unread")>0?" · "+c.optInt("unread"):"")+"\n"+(preview.isEmpty()?"Напишите первое сообщение":preview),v->{if(busy)return;select(c);refresh();});row.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);row.setBackgroundTintList(ColorStateList.valueOf(Color.WHITE));row.setTextColor(INK);chatList.addView(row);}
+  if(chatList==null)return;String signature=chats.toString();if(signature.equals(inboxAppearance))return;inboxAppearance=signature;chatList.removeAllViews();
+  if(chats.length()==0){gap(chatList,30);chatList.addView(heading("Пока тихо",22));gap(chatList,10);chatList.addView(text("Найдите близкого человека\nи начните первый разговор.",15,MUTED));}
+  for(int i=0;i<chats.length();i++){chatList.addView(contact(chats.optJSONObject(i),false),lp(-1,-2));gap(chatList,8);}
  }
  private void conversationScreen(){
-  root.addView(button("☎ Позвонить",v->{if(!busy&&!recording&&selected!=null)calls.dial(selected.optString("username"));}));
-  root.addView(button("‹ Сообщения",v->{if(busy||recording)return;select(null);refresh();}));
-  messageScroll=new ScrollView(this);messageList=column();messageScroll.addView(messageList);root.addView(messageScroll,new LinearLayout.LayoutParams(-1,0,1));
-  attachment=column();root.addView(attachment);showAttachment();
-  LinearLayout composer=new LinearLayout(this);composer.setGravity(Gravity.BOTTOM);Button add=button("+",v->attach());add.setContentDescription("Прикрепить фотографию");composer.addView(add,lp(dp(48),dp(52)));draft=input("Сообщение…",4000,false);draft.setSingleLine(false);draft.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);draft.setMaxLines(5);String saved=drafts.get(selected.optString("id"));draft.setText(saved==null?"":saved);composer.addView(draft,new LinearLayout.LayoutParams(0,-2,1));
-  micButton=button("🎤",v->recordVoice());micButton.setContentDescription("Записать голосовое сообщение");composer.addView(micButton,lp(dp(48),dp(52)));
-  sendButton=button("↑",v->send());sendButton.setContentDescription("Отправить сообщение");composer.addView(sendButton,lp(dp(56),dp(52)));root.addView(composer);renderMessages();
+  LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);Button back=Ui.icon(this,"back","Назад к сообщениям",v->{if(busy||recording)return;select(null);refresh();},true);header.addView(back,lp(dp(44),dp(48)));TextView avatar=Ui.avatar(this,selected.optString("username"),40);LinearLayout.LayoutParams avatarSize=lp(dp(40),dp(40));avatarSize.setMargins(dp(10),0,dp(12),0);header.addView(avatar,avatarSize);LinearLayout names=column();TextView peer=heading("@"+selected.optString("username"),17);peer.setSingleLine();peer.setEllipsize(android.text.TextUtils.TruncateAt.END);names.addView(peer);names.addView(text("Личная переписка",11,MUTED));header.addView(names,new LinearLayout.LayoutParams(0,-2,1));header.addView(Ui.icon(this,"phone","Позвонить",v->{if(!busy&&!recording&&selected!=null)calls.dial(selected.optString("username"));},true),lp(dp(48),dp(48)));root.addView(header);gap(root,12);
+  messageScroll=new ScrollView(this);messageScroll.setVerticalScrollBarEnabled(false);messageList=column();messageList.setPadding(dp(2),dp(8),dp(2),dp(8));messageScroll.addView(messageList);root.addView(messageScroll,new LinearLayout.LayoutParams(-1,0,1));attachment=column();root.addView(attachment);showAttachment();
+  LinearLayout composer=new LinearLayout(this);composer.setGravity(Gravity.BOTTOM);composer.setPadding(dp(4),dp(5),dp(4),dp(5));composer.setBackground(bg(Color.WHITE,22));Button add=Ui.icon(this,"plus","Прикрепить фотографию",v->attach(),true);composer.addView(add,lp(dp(44),dp(48)));draft=input("Сообщение…",4000,false);draft.setBackgroundColor(Color.TRANSPARENT);draft.setPadding(dp(10),dp(12),dp(6),dp(12));draft.setSingleLine(false);draft.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);draft.setMaxLines(5);String saved=drafts.get(selected.optString("id"));draft.setText(saved==null?"":saved);composer.addView(draft,new LinearLayout.LayoutParams(0,-2,1));
+  micButton=Ui.icon(this,"mic","Записать голосовое сообщение",v->recordVoice(),true);composer.addView(micButton,lp(dp(44),dp(48)));sendButton=Ui.icon(this,"send","Отправить сообщение",v->send(),false);LinearLayout.LayoutParams sendSize=lp(dp(48),dp(48));sendSize.leftMargin=dp(4);composer.addView(sendButton,sendSize);root.addView(composer);renderMessages();
  }
- private void updateButtons(){if(authButton!=null)authButton.setEnabled(!busy);if(searchButton!=null)searchButton.setEnabled(!busy);if(sendButton!=null)sendButton.setEnabled(!busy&&!recording);if(micButton!=null){micButton.setEnabled(!busy&&photo==null&&voice==null);micButton.setText(recording?"■":"🎤");micButton.setContentDescription(recording?"Остановить запись":"Записать голосовое сообщение");}}
+ private void updateButtons(){if(authButton!=null)authButton.setEnabled(!busy);if(searchButton!=null)searchButton.setEnabled(!busy);if(sendButton!=null)sendButton.setEnabled(!busy&&!recording);if(micButton!=null){micButton.setEnabled(!busy&&photo==null&&voice==null);micButton.setText(recording?"■":"");micButton.setCompoundDrawablesWithIntrinsicBounds(recording?null:new Ui.Icon(this,"mic",PINE),null,null,null);micButton.setContentDescription(recording?"Остановить запись":"Записать голосовое сообщение");}}
  private void clear(){NotificationService.stop(this);calls.disconnect();audio.stopRecording(false);stopAudio();voice=null;retryVoice=null;voiceDrafts.clear();session=null;selected=null;photo=null;retryPhoto=null;photoDrafts.clear();photoCache.evictAll();messages.clear();chats=new JSONArray();users=new JSONArray();drafts.clear();searchText="";cursor=0;screen();}
  private void error(Exception e,boolean auth){
   if(!auth&&e instanceof ApiError&&((ApiError)e).code==401){getSharedPreferences("account-v2",Context.MODE_PRIVATE).edit().clear().commit();clear();}
@@ -228,19 +229,20 @@ public class MainActivity extends Activity {
   }catch(Exception e){ui.post(()->{polling=false;if(!isDestroyed()&&session==target)error(e,false);});}});
  }
  private void renderMessages(){
-  if(messageList==null||session==null)return;int old=messageScroll.getScrollY();boolean bottom=messageList.getHeight()-old-messageScroll.getHeight()<dp(90);if(receipts.isEmpty())messageList.removeAllViews();
-  if(messages.isEmpty()){TextView empty=text("Напишите первое сообщение.",16,MUTED);empty.setPadding(0,dp(28),0,0);messageList.addView(empty);}
+  if(messageList==null||session==null)return;int old=messageScroll.getScrollY();boolean bottom=messageList.getHeight()-old-messageScroll.getHeight()<dp(90);boolean animate=!receipts.isEmpty();if(receipts.isEmpty()){messageList.removeAllViews();messageDay="";}
+  if(messages.isEmpty()){TextView empty=text("Скажите «привет»\nИ начнётся ваш разговор",20,MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(28),0,0);messageList.addView(empty);}
   for(JSONObject m:messages){
    boolean own=m.optString("sender").equals(session.optJSONObject("user").optString("id"));int ink=own?Color.WHITE:INK;
-   String time=new SimpleDateFormat("dd.MM HH:mm",Locale.getDefault()).format(new Date(m.optLong("at")));
+   String time=new SimpleDateFormat("HH:mm",Locale.getDefault()).format(new Date(m.optLong("at")));
    String stamp=time+(own?(peerRead>=m.optLong("seq")?" · Прочитано":" · Отправлено"):"");
    if(receipts.containsKey(m.optLong("seq"))){receipts.get(m.optLong("seq")).setText(stamp);continue;}
-   LinearLayout row=new LinearLayout(this);row.setGravity(own?Gravity.RIGHT:Gravity.LEFT);LinearLayout bubble=column();bubble.setPadding(dp(14),dp(10),dp(14),dp(6));bubble.setBackground(bg(own?PINE:Color.WHITE,14));
+   String day=new SimpleDateFormat("d MMMM",Locale.getDefault()).format(new Date(m.optLong("at")));if(!day.equals(messageDay)){messageDay=day;TextView divider=text(day,11,MUTED);divider.setGravity(Gravity.CENTER);divider.setPadding(0,dp(10),0,dp(16));messageList.addView(divider);}
+   LinearLayout row=new LinearLayout(this);row.setGravity(own?Gravity.RIGHT:Gravity.LEFT);LinearLayout bubble=column();bubble.setPadding(dp(14),dp(10),dp(14),dp(6));bubble.setBackground(own?Ui.gradient(this,PINE,0xff258263,20):bg(Color.WHITE,20));
    if(!m.isNull("photo")&&!m.optString("photo").isEmpty())addPhoto(bubble,m.optString("photo"),selected.optString("id"));
    if(!m.isNull("voice")&&!m.optString("voice").isEmpty())addVoice(bubble,m.optString("voice"),selected.optString("id"),m.optInt("duration"));
    String body=m.optString("text");TextView content=text(body,16,ink);content.setTextIsSelectable(true);content.setMaxWidth(Math.max(dp(160),getResources().getDisplayMetrics().widthPixels-dp(110)));if(!body.isEmpty())bubble.addView(content);
-   TextView receipt=text(stamp,11,ink);bubble.addView(receipt);receipts.put(m.optLong("seq"),receipt);
-   row.addView(bubble);LinearLayout.LayoutParams p=lp(-1,-2);p.setMargins(0,dp(6),0,dp(6));messageList.addView(row,p);
+   TextView receipt=text(stamp,10,ink);receipt.setAlpha(.7f);receipt.setGravity(Gravity.RIGHT);receipt.setPadding(0,dp(7),0,dp(3));bubble.addView(receipt);receipts.put(m.optLong("seq"),receipt);
+   row.addView(bubble);LinearLayout.LayoutParams p=lp(-1,-2);p.setMargins(0,dp(6),0,dp(6));messageList.addView(row,p);if(animate&&bottom)Ui.enter(row,8);
   }messageScroll.post(()->{if(bottom)messageScroll.fullScroll(View.FOCUS_DOWN);else messageScroll.scrollTo(0,old);});
  }
  private void send(){
