@@ -25,7 +25,7 @@ using Windows.Graphics.Imaging;
 using BitmapDecoder=System.Windows.Media.Imaging.BitmapDecoder;
 using BitmapFrame=System.Windows.Media.Imaging.BitmapFrame;
 using Windows.Media.MediaProperties;
-[assembly:System.Reflection.AssemblyVersion("2.6.0.0")]
+[assembly:System.Reflection.AssemblyVersion("2.6.1.0")]
 namespace Ryadom {
  public class Profile { public string id; public string username; }
  public class Session { public string token; public long expiresAt; public Profile user; }
@@ -106,6 +106,7 @@ namespace Ryadom {
    Get<TextBlock>("Me").Text=signed?"@"+session.user.username:"Личные сообщения";
    Get<Grid>("Chat").Visibility=signed&&selected!=null?Visibility.Visible:Visibility.Collapsed;
    Get<Grid>("Empty").Visibility=selected==null?Visibility.Visible:Visibility.Collapsed;
+   UpdateComposerControls();
   }
   void Save(Session s){
    Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
@@ -122,9 +123,9 @@ namespace Ryadom {
    if(busy)return;
    string name=Get<TextBox>("Username").Text.Trim(),password=Get<PasswordBox>("Password").Password;
    if(register&&password!=Get<PasswordBox>("Confirm").Password){Status("Пароли не совпадают.",true);return;}
-   busy=true;Get<Button>("Auth").IsEnabled=false;Status("Подключаемся… Первый запуск сервера может занять минуту.");
+   SetBusy(true);Get<Button>("Auth").IsEnabled=false;Status("Подключаемся… Первый запуск сервера может занять минуту.");
    try{var next=await Api.Call<Session>(null,new{action=register?"register":"login",username=name,password});Save(next);session=next;selected=null;Show();Status("Вы вошли как @"+next.user.username);await Refresh();}
-   catch(Exception ex){Error(ex,true);}finally{busy=false;Get<Button>("Auth").IsEnabled=true;Get<PasswordBox>("Password").Clear();Get<PasswordBox>("Confirm").Clear();}
+   catch(Exception ex){Error(ex,true);}finally{SetBusy(false);Get<Button>("Auth").IsEnabled=true;Get<PasswordBox>("Password").Clear();Get<PasswordBox>("Confirm").Clear();}
   }
   Task Logout(){
    if(busy||recording||session==null)return Task.FromResult(0);var target=session;
@@ -138,23 +139,23 @@ namespace Ryadom {
    StyleDialog(dialog);dialog.Content=panel;dialog.Closing+=(a,e)=>{if(busy)e.Cancel=true;};dialog.Loaded+=(a,e)=>password.Focus();
    submit.Click+=async(a,e)=>{
     if(busy)return;string confirmation=password.Password;if(confirmation.Length==0){feedback.Text="Введите пароль.";return;}
-    busy=true;submit.IsEnabled=false;cancel.IsEnabled=false;feedback.Text="Проверяем пароль…";
-    try{await Api.Call<Result>(target,new{action="logout",password=confirmation});Clear();Status("Вы вышли из аккаунта.");busy=false;dialog.DialogResult=true;}
-    catch(Exception ex){Error(ex);feedback.Text=ex is HttpRequestException||ex is TaskCanceledException?"Нет связи с сервером. Вы остались в аккаунте.":ex.Message;if(session==null){busy=false;dialog.DialogResult=true;}}
-    finally{busy=false;submit.IsEnabled=true;cancel.IsEnabled=true;password.Clear();}
+    SetBusy(true);submit.IsEnabled=false;cancel.IsEnabled=false;feedback.Text="Проверяем пароль…";
+    try{await Api.Call<Result>(target,new{action="logout",password=confirmation});Clear();Status("Вы вышли из аккаунта.");SetBusy(false);dialog.DialogResult=true;}
+    catch(Exception ex){Error(ex);feedback.Text=ex is HttpRequestException||ex is TaskCanceledException?"Нет связи с сервером. Вы остались в аккаунте.":ex.Message;if(session==null){SetBusy(false);dialog.DialogResult=true;}}
+    finally{SetBusy(false);submit.IsEnabled=true;cancel.IsEnabled=true;password.Clear();}
    };
    dialog.ShowDialog();return Task.FromResult(0);
   }
   Button Row(string text,Action click){var b=new Button{Content=new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap},HorizontalContentAlignment=HorizontalAlignment.Left,Background=Brushes.White,Foreground=new SolidColorBrush(Color.FromRgb(33,58,50)),Margin=new Thickness(0,0,0,8),Padding=new Thickness(12)};b.Click+=(a,e)=>click();return b;}
   async Task Search(){
-   if(busy||session==null)return;busy=true;var target=session;Get<Button>("Search").IsEnabled=false;
+   if(busy||session==null)return;SetBusy(true);var target=session;Get<Button>("Search").IsEnabled=false;
    try{var r=await Api.Call<Result>(target,null,"?view=search&q="+Uri.EscapeDataString(Get<TextBox>("Query").Text.Trim()));if(session!=target)return;var p=Get<StackPanel>("Results");p.Children.Clear();foreach(var user in r.users){var u=user;p.Children.Add(ContactRow(u.username,"Открыть профиль",0,0,false,()=>{if(busy)return;if(MessageBox.Show("@"+u.username+"\n\nОткрыть личную переписку?","Профиль",MessageBoxButton.YesNo)==MessageBoxResult.Yes)Open(u.username);}));}Status(r.users.Count==0?"Пользователь не найден. Проверьте юзернейм.":"Выберите профиль, чтобы написать.");}
-   catch(Exception ex){Error(ex);}finally{busy=false;Get<Button>("Search").IsEnabled=true;}
+   catch(Exception ex){Error(ex);}finally{SetBusy(false);Get<Button>("Search").IsEnabled=true;}
   }
   async void Open(string username){
-   if(busy||session==null)return;busy=true;var target=session;
+   if(busy||session==null)return;SetBusy(true);var target=session;
    try{var r=await Api.Call<Result>(target,new{action="open",username});if(session!=target)return;Select(new Conversation{id=r.conversation,peerId=r.peer.id,username=r.peer.username});}
-   catch(Exception ex){Error(ex);}finally{busy=false;}await Refresh();
+   catch(Exception ex){Error(ex);}finally{SetBusy(false);}await Refresh();
   }
   void Select(Conversation c){
    if(recording)return;StopAudio();if(selected!=null)voiceDrafts[selected.id]=voice;voiceDrafts.TryGetValue(c.id,out voice);retryVoice=null;
@@ -222,10 +223,10 @@ namespace Ryadom {
   }
   async Task PickPhoto(){
    if(busy||recording||voice!=null||selected==null)return;var target=selected;var file=new Microsoft.Win32.OpenFileDialog{Filter="Фотографии|*.jpg;*.jpeg;*.png;*.bmp;*.heic;*.heif|Все файлы|*.*",Title="Выберите фотографию"};if(file.ShowDialog(w)!=true)return;
-   busy=true;Status("Готовим фотографию…");try{if(new FileInfo(file.FileName).Length>40*1024*1024)throw new Exception("Выберите фото размером до 40 МБ.");var bytes=await Task.Run(()=>File.ReadAllBytes(file.FileName));var prepared=PreparePhoto(bytes);if(selected==target){photo=prepared;ShowPhoto();Status("Фото готово. Добавьте подпись или нажмите ↑.");}}catch(Exception ex){Status("Не удалось открыть фото: "+ex.Message,true);}finally{busy=false;}
+   SetBusy(true);Status("Готовим фотографию…");try{if(new FileInfo(file.FileName).Length>40*1024*1024)throw new Exception("Выберите фото размером до 40 МБ.");var bytes=await Task.Run(()=>File.ReadAllBytes(file.FileName));var prepared=PreparePhoto(bytes);if(selected==target){photo=prepared;ShowPhoto();Status("Фото готово. Добавьте подпись или нажмите ↑.");}}catch(Exception ex){Status("Не удалось открыть фото: "+ex.Message,true);}finally{SetBusy(false);}
   }
   async Task TakePhoto(){
-   if(busy||recording||voice!=null||selected==null)return;var target=selected;busy=true;
+   if(busy||recording||voice!=null||selected==null)return;var target=selected;SetBusy(true);
    var dialog=new Window{Owner=w,Title="Камера",Width=720,Height=600,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=Brushes.Black};
    var layout=new DockPanel{Margin=new Thickness(16)};var controls=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Center};DockPanel.SetDock(controls,Dock.Bottom);layout.Children.Add(controls);
    var take=new Button{Content="Сделать снимок",Padding=new Thickness(20,12,20,12),Margin=new Thickness(8),IsEnabled=false};controls.Children.Add(take);
@@ -258,7 +259,7 @@ namespace Ryadom {
     }catch{if(!closed)hint.Text="Не удалось включить камеру. Проверьте её подключение и разрешите доступ классическим приложениям в настройках Windows → Конфиденциальность → Камера.";}
    };
    dialog.Loaded+=(a,b)=>setup=initialize();
-   try{dialog.ShowDialog();await setup;if(reader!=null)await reader.StopAsync();}catch{}finally{if(reader!=null)reader.Dispose();if(capture!=null)capture.Dispose();busy=false;}
+   try{dialog.ShowDialog();await setup;if(reader!=null)await reader.StopAsync();}catch{}finally{if(reader!=null)reader.Dispose();if(capture!=null)capture.Dispose();SetBusy(false);}
   }
   void AddPhoto(StackPanel panel,string id,string conversation){
    var image=new Image{MaxWidth=300,MaxHeight=300,Stretch=Stretch.Uniform,Cursor=Cursors.Hand};panel.Children.Add(image);
@@ -267,14 +268,20 @@ namespace Ryadom {
    retry.Click+=async(a,b)=>await load();image.MouseLeftButtonUp+=(a,b)=>{if(image.Source==null)return;new Window{Owner=w,Title="Фотография",Width=800,Height=650,WindowStartupLocation=WindowStartupLocation.CenterOwner,Content=new Image{Source=image.Source,Stretch=Stretch.Uniform,Margin=new Thickness(12)}}.ShowDialog();};retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
   }
 
+  void SetBusy(bool value){busy=value;UpdateComposerControls();}
+  void UpdateComposerControls(){
+   // Recompute every composer action together when an operation starts or ends.
+   bool ready=!busy&&session!=null&&selected!=null;
+   Get<Button>("Microphone").IsEnabled=ready&&voice==null&&photo==null;
+   Get<Button>("Attach").IsEnabled=ready&&!recording&&voice==null;
+   Get<Button>("Send").IsEnabled=ready&&!recording;
+  }
   void ShowVoice(){
    Get<Border>("VoicePreview").Visibility=voice!=null&&!recording?Visibility.Visible:Visibility.Collapsed;
    Get<Border>("VoiceRecording").Visibility=recording?Visibility.Visible:Visibility.Collapsed;
    if(voice!=null)Get<Button>("PlayDraftVoice").Content="▶ "+VoiceCapture.Time(VoiceCapture.Seconds(voice))+" · Прослушать";
    Get<Button>("Microphone").Content=recording?"\uE71A":"\uE720";Get<Button>("Microphone").ToolTip=recording?"Остановить запись":"Записать голосовое сообщение";
-   Get<Button>("Microphone").IsEnabled=!busy&&voice==null&&photo==null;
-   Get<Button>("Attach").IsEnabled=!busy&&!recording&&voice==null;
-   Get<Button>("Send").IsEnabled=!busy&&!recording;
+   UpdateComposerControls();
   }
   async Task RecordVoice(){
    if(callSession.Busy){Status("Сначала завершите звонок.");return;}
@@ -315,10 +322,10 @@ namespace Ryadom {
 
   async Task Send(){
    if(busy||recording||session==null||selected==null)return;StopAudio();var value=Get<TextBox>("Draft").Text.Trim();if(value.Length==0&&photo==null&&voice==null)return;var image=photo;var clip=voice;
-   busy=true;Get<Button>("Send").IsEnabled=false;var target=session;var chat=selected;
+   SetBusy(true);var target=session;var chat=selected;
    if(value!=retryText||chat.id!=retryChat||!object.ReferenceEquals(image,retryPhoto)||!object.ReferenceEquals(clip,retryVoice)){retryVoice=clip;retryPhoto=image;retryText=value;retryChat=chat.id;retryId=Guid.NewGuid().ToString();}
    try{await Api.Call<Result>(target,new{action=clip!=null?"sendVoice":(image==null?"send":"sendPhoto"),conversation=chat.id,clientId=retryId,text=value,data=clip!=null?Convert.ToBase64String(clip):(image==null?null:Convert.ToBase64String(image))});if(session==target&&selected==chat){if(Get<TextBox>("Draft").Text.Trim()==value)Get<TextBox>("Draft").Clear();drafts.Remove(chat.id);if(object.ReferenceEquals(photo,image))photo=null;photoDrafts.Remove(chat.id);retryPhoto=null;if(object.ReferenceEquals(voice,clip))voice=null;voiceDrafts.Remove(chat.id);retryVoice=null;ShowPhoto();ShowVoice();retryText="";retryId="";await Refresh();Get<ScrollViewer>("Scroll").ScrollToEnd();}}
-   catch(Exception ex){Error(ex);}finally{busy=false;Get<Button>("Send").IsEnabled=true;}
+   catch(Exception ex){Error(ex);}finally{SetBusy(false);}
   }
  }
 }

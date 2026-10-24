@@ -26,5 +26,5 @@
    </StackPanel></Grid>
   </Grid></Border>
  </Grid>
- <DockPanel Grid.Row="2" Margin="8,12,8,0"><TextBlock Text="РЯДОМ 2.6" DockPanel.Dock="Right" Foreground="#94A79C" FontSize="10" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Личные сообщения, фотографии и звонки" TextWrapping="Wrap" Foreground="#6C8278" FontSize="11"/></DockPanel>
+ <DockPanel Grid.Row="2" Margin="8,12,8,0"><TextBlock Text="РЯДОМ 2.6.1" DockPanel.Dock="Right" Foreground="#94A79C" FontSize="10" FontWeight="SemiBold"/><TextBlock x:Name="Status" Text="Личные сообщения, фотографии и звонки" TextWrapping="Wrap" Foreground="#6C8278" FontSize="11"/></DockPanel>
 </Grid></Window>

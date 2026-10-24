@@ -28,6 +28,9 @@ jobs:
       - name: Test call lifecycle and native transport without recording
         shell: powershell
         run: ./windows/test-calls.ps1
+      - name: Test composer recovery after sending text and attachments
+        shell: powershell
+        run: ./windows/test-composer.ps1
       - name: Render synthetic UI previews without opening the messenger
         shell: powershell
         run: ./windows/preview-design.ps1
