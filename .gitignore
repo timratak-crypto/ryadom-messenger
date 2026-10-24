@@ -1,0 +1,13 @@
+build/
+**/build/
+*.ipa
+*.exe
+*.apk
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+.DS_Store
+xcuserdata/
+node_modules/
+**/node_modules/

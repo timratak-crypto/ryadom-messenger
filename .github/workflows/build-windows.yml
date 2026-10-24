@@ -1,0 +1,36 @@
+name: Build Windows EXE and test calls
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows/**'
+      - 'server-relay/**'
+      - '.github/workflows/build-windows.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install relay dependencies and test the protocol
+        working-directory: server-relay
+        run: |
+          npm ci --omit=dev
+          npm test
+      - name: Compile Windows application
+        shell: powershell
+        run: ./windows/build.ps1
+      - name: Test call lifecycle and native transport without recording
+        shell: powershell
+        run: ./windows/test-calls.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ryadom-Windows-EXE
+          path: windows/build/Ryadom.exe
+          if-no-files-found: error
+          retention-days: 14

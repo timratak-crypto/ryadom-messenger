@@ -1,0 +1,34 @@
+name: Build iPhone IPA
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-ipa.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check live conversation polling and foreground resume
+        run: bash ios/tests/run-polling-tests.sh
+      - name: Compile real iPhone application
+        run: |
+          xcodebuild -project ios/Ryadom.xcodeproj -scheme Ryadom -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned IPA for signing
+        run: |
+          mkdir -p package/Payload
+          cp -R build/Build/Products/Release-iphoneos/Ryadom.app package/Payload/
+          test -f package/Payload/Ryadom.app/Ryadom
+          file package/Payload/Ryadom.app/Ryadom | grep -q 'Mach-O 64-bit executable arm64'
+          cd package
+          /usr/bin/zip -qr ../Ryadom-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ryadom-unsigned-IPA
+          path: Ryadom-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

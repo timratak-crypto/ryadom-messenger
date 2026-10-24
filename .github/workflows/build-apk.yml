@@ -1,0 +1,25 @@
+name: Build Android APK
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify Android application
+        run: bash android/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ryadom-Android-APK
+          path: |
+            android/build/Ryadom-Android.apk
+            android/build/APK-verification.txt
+          if-no-files-found: error
+          retention-days: 14
