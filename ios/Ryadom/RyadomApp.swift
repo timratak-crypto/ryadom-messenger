@@ -2,20 +2,22 @@ import SwiftUI
 import Security
 import UIKit
 
-struct Profile: Codable, Identifiable { let id: String; let username: String }
+struct Profile: Codable, Identifiable, Equatable { let id: String; let username: String; var avatar: String? = nil }
 struct AccountSession: Codable { let token: String; let expiresAt: Double; let user: Profile }
-struct Conversation: Codable, Identifiable { let id: String; let peerId: String; let username: String; let lastText: String; let at: Double; let unread: Int }
-struct ChatMessage: Codable, Identifiable {
+struct Conversation: Codable, Identifiable { let id: String; let peerId: String; let username: String; let lastText: String; let at: Double; let unread: Int; var avatar: String? = nil }
+struct ChatMessage: Codable, Identifiable, Equatable {
     let seq: Int64; let sender: String; let clientId: String; let text: String; let at: Double
     var photo: String? = nil; var width: Int? = nil; var height: Int? = nil
     var voice: String? = nil; var duration: Int? = nil
+    var editedAt: Double? = nil; var deletedAt: Double? = nil; var kind: String? = nil; var callStatus: String? = nil; var callDuration: Int? = nil
     var id: Int64 { seq }
 }
 struct Inbox: Decodable { let user: Profile; let chats: [Conversation] }
 struct SearchResult: Decodable { let users: [Profile] }
 struct Opened: Decodable { let conversation: String; let peer: Profile }
-struct Feed: Decodable { let messages: [ChatMessage]; let peerRead: Int64; let hasMore: Bool }
-struct PhotoResponse: Decodable { let data: String }
+struct Feed: Decodable { let messages: [ChatMessage]; let peerRead: Int64; let hasMore: Bool; var updates: [ChatMessage]? = nil; var changesCursor: Int64? = nil }
+struct PhotoResponse: Decodable { let data: String; var avatar: String? = nil }
+struct ProfileResponse: Decodable { let user: Profile }
 struct Accepted: Decodable { let ok: Bool }
 struct ErrorBody: Decodable { let error: String }
 struct PollingContext: Equatable {
@@ -72,6 +74,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
     var onInbox: (([Conversation]) -> Void)?
     private var polling = false
     private var cursor: Int64 = 0
+    private var changesCursor: Int64 = 0
     private var selectionGeneration = UUID()
     private var drafts: [String: String] = [:]
     private var retryText = "", retryID = "", retryChat = ""
@@ -98,7 +101,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         if !authenticating, (e as? ChatError)?.code == 401 { try? SecureStore.save(nil); reset() }
         error = e is URLError ? "Нет связи с сервером. Первый запуск может занять минуту. Повторите попытку." : e.localizedDescription
     }
-    func reset() { session = nil; selected = nil; chats = []; users = []; messages = []; draft = ""; query = ""; drafts = [:]; photoDrafts = [:]; voiceDrafts = [:]; voice = nil; retryVoice = nil; recording = false; photo = nil; retryPhoto = nil; cursor = 0; selectionGeneration = UUID() }
+    func reset() { session = nil; selected = nil; chats = []; users = []; messages = []; draft = ""; query = ""; drafts = [:]; photoDrafts = [:]; voiceDrafts = [:]; voice = nil; retryVoice = nil; recording = false; photo = nil; retryPhoto = nil; cursor = 0; changesCursor = 0; selectionGeneration = UUID() }
     func authenticate(username: String, password: String, register: Bool) async {
         guard !busy else { return }; busy = true; error = ""; defer { busy = false }
         do {
@@ -126,13 +129,13 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         do {
             let result: Opened = try await request(token: target.token, body: ["action": "open", "username": profile.username])
             guard session?.token == target.token else { return }
-            select(Conversation(id: result.conversation, peerId: profile.id, username: profile.username, lastText: "", at: 0, unread: 0)); await refresh()
+            select(Conversation(id: result.conversation, peerId: profile.id, username: profile.username, lastText: "", at: 0, unread: 0, avatar: profile.avatar)); await refresh()
         } catch { failed(error) }
     }
     func select(_ chat: Conversation?) {
         if let old = selected { drafts[old.id] = draft; photoDrafts[old.id] = photo; voiceDrafts[old.id] = voice }
         selectionGeneration = UUID()
-        selected = chat; messages = []; cursor = 0; peerRead = 0; draft = chat.flatMap { drafts[$0.id] } ?? ""
+        selected = chat; messages = []; cursor = 0; changesCursor = 0; peerRead = 0; draft = chat.flatMap { drafts[$0.id] } ?? ""
         photo = chat.flatMap { photoDrafts[$0.id] }; retryPhoto = nil
         voice = chat.flatMap { voiceDrafts[$0.id] }; retryVoice = nil
         retryText = ""; retryID = ""; retryChat = ""; error = ""
@@ -150,15 +153,32 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
         let chat = selected, generation = selectionGeneration, after = cursor
         do {
             let inbox: Inbox = try await request(token: target.token)
-            guard session?.token == target.token else { return }; chats = inbox.chats; onInbox?(inbox.chats)
+            guard session?.token == target.token else { return }; chats = inbox.chats; acceptProfile(inbox.user); if let id = selected?.id, let fresh = chats.first(where: { $0.id == id }) { selected = fresh }; onInbox?(inbox.chats)
             guard selectionGeneration == generation else { return }
             if let chat {
-                let feed: Feed = try await request(token: target.token, query: [.init(name: "view", value: "messages"), .init(name: "conversation", value: chat.id), .init(name: "after", value: String(after))])
+                let feed: Feed = try await request(token: target.token, query: [.init(name: "view", value: "messages"), .init(name: "conversation", value: chat.id), .init(name: "after", value: String(after)), .init(name: "changesAfter", value: String(changesCursor))])
                 guard session?.token == target.token, selectionGeneration == generation else { return }
                 for m in feed.messages where !messages.contains(where: { $0.seq == m.seq }) { messages.append(m); cursor = max(cursor, m.seq) }
+                for m in feed.updates ?? [] { if let index = messages.firstIndex(where: { $0.seq == m.seq }) { messages[index] = m } }
+                changesCursor = max(changesCursor, feed.changesCursor ?? 0)
                 peerRead = feed.peerRead
             }
         } catch { if session?.token == target.token { failed(error) } }
+    }
+    func acceptProfile(_ user: Profile) {
+        guard let old = session, old.user.id == user.id, old.user != user else { return }
+        let updated = AccountSession(token: old.token, expiresAt: old.expiresAt, user: user)
+        session = updated; try? SecureStore.save(updated)
+    }
+    func updateProfile(_ body: [String: Any]) async -> Bool {
+        guard !busy, let target = session else { return false }; busy = true; error = ""; defer { busy = false }
+        do { let response: ProfileResponse = try await request(token: target.token, body: body); guard session?.token == target.token else { return false }; acceptProfile(response.user); return true }
+        catch { failed(error); return false }
+    }
+    func mutate(_ message: ChatMessage, text: String?) async -> Bool {
+        guard !busy, !recording, let target = session, let chat = selected else { return false }; busy = true; error = ""; defer { busy = false }
+        do { var body: [String: Any] = ["action": text == nil ? "deleteMessage" : "editMessage", "conversation": chat.id, "seq": message.seq]; if let text { body["text"] = text }; let _: Accepted = try await request(token: target.token, body: body); await refresh(); return true }
+        catch { failed(error); return false }
     }
     func send() async {
         guard !busy, !recording, let target = session, let chat = selected else { return }
@@ -283,15 +303,15 @@ import UniformTypeIdentifiers
 }
 
 enum PhotoEncoding {
-    static func jpeg(_ image: UIImage) throws -> Data {
-        let scale = min(1, 1600 / max(image.size.width, image.size.height))
+    static func jpeg(_ image: UIImage, maxDimension: CGFloat = 1600, maxBytes: Int = 1024 * 1024) throws -> Data {
+        let scale = min(1, maxDimension / max(image.size.width, image.size.height))
         let size = CGSize(width: max(1, image.size.width * scale), height: max(1, image.size.height * scale))
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
         let normalized = UIGraphicsImageRenderer(size: size, format: format).image { context in
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size)); image.draw(in: CGRect(origin: .zero, size: size))
         }
         for quality in [0.82, 0.65, 0.45, 0.25] {
-            if let data = normalized.jpegData(compressionQuality: quality), data.count <= 1024 * 1024 { return data }
+            if let data = normalized.jpegData(compressionQuality: quality), data.count <= maxBytes { return data }
         }
         throw ChatError("Не удалось уменьшить фотографию. Выберите другой снимок.")
     }
@@ -371,23 +391,47 @@ struct MessagePhoto: View {
 extension Color {
     init(rgb: UInt32) { self.init(red: Double((rgb >> 16) & 255)/255, green: Double((rgb >> 8) & 255)/255, blue: Double(rgb & 255)/255) }
 }
-let pine = Color(rgb: 0x176B53)
-let paper = Color(rgb: 0xF0F6F2)
+enum Appearance {
+    static let names = ["Зелёный","Красный","Синий","Фиолетовый","Розовый","Оранжевый","Бирюзовый","Индиго","Малиновый","Оливковый","Графит","Коричневый"]
+    static let values: [UInt32] = [0x176B53,0xB83E42,0x2766BC,0x7B49B0,0xB33D7A,0xAD591D,0x167B82,0x4F51B7,0xA72E55,0x687528,0x465363,0x84604A]
+    static var current: UInt32 { values[max(0, min(values.count-1, UserDefaults.standard.integer(forKey: "ryadom.accent")))] }
+    static func tint(_ white: Double) -> Color { let value = current; return Color(red: Double((value >> 16) & 255)/255*(1-white)+white, green: Double((value >> 8) & 255)/255*(1-white)+white, blue: Double(value & 255)/255*(1-white)+white) }
+    static var deep: Color { let value = current; return Color(red: Double((value >> 16) & 255)/255*0.55, green: Double((value >> 8) & 255)/255*0.55, blue: Double(value & 255)/255*0.55) }
+}
+var pine: Color { Color(rgb: Appearance.current) }
+var paper: Color { Appearance.tint(0.965) }
 enum Look {
-    static let ink = Color(rgb: 0x183C32), muted = Color(rgb: 0x6C8278), soft = Color(rgb: 0xE8F3ED)
-    static let gradient = LinearGradient(colors: [pine, Color(rgb: 0x258263)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    static let ink = Color(rgb: 0x293B35), muted = Color(rgb: 0x6C8278)
+    static var soft: Color { Appearance.tint(0.91) }
+    static var gradient: LinearGradient { LinearGradient(colors: [pine, Appearance.tint(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing) }
 }
 struct AvatarView: View {
     let name: String
     var size: CGFloat = 48
+    var userID: String? = nil
+    var avatar: String? = nil
+    var token: String? = nil
+    @State private var image: UIImage?
+    private static let cache = NSCache<NSString, UIImage>()
+    private static let network = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
     var body: some View {
         let colors: [UInt32] = [0x277B61, 0x5988A3, 0xA77C56, 0x8A78A7, 0x4C9690]
         let hash = name.utf8.reduce(UInt32(0)) { ($0 &* 31 &+ UInt32($1)) & 0x7fffffff }
-        Text(name.isEmpty ? "Р" : String(name.prefix(2)).uppercased()).font(.system(size: size * 0.32, weight: .semibold, design: .rounded)).foregroundStyle(.white)
-            .frame(width: size, height: size).background(LinearGradient(colors: [Color(rgb: colors[Int(hash) % colors.count]), Color(rgb: 0x96BEA5)], startPoint: .topLeading, endPoint: .bottomTrailing)).clipShape(RoundedRectangle(cornerRadius: size * 0.36, style: .continuous)).accessibilityHidden(true)
+        ZStack {
+            LinearGradient(colors: [Color(rgb: colors[Int(hash) % colors.count]), Color(rgb: 0x96BEA5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
+            else { Text(name.isEmpty ? "Р" : String(name.prefix(2)).uppercased()).font(.system(size: size * 0.32, weight: .semibold, design: .rounded)).foregroundStyle(.white) }
+        }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: size * 0.36, style: .continuous)).accessibilityHidden(true)
+        .task(id: avatar) {
+            image = nil
+            guard let avatar, let userID, let token else { return }
+            if let cached = Self.cache.object(forKey: avatar as NSString) { image = cached; return }
+            do { var url = URLComponents(string: "https://ryadom-family-chat.onrender.com/api/v2")!; url.queryItems = [.init(name: "view", value: "avatar"), .init(name: "user", value: userID)]; var request = URLRequest(url: url.url!); request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization"); let (data, response) = try await Self.network.data(for: request); guard (response as? HTTPURLResponse)?.statusCode == 200 else { return }; let photo = try JSONDecoder().decode(PhotoResponse.self, from: data); guard photo.avatar == avatar, let bytes = Data(base64Encoded: photo.data), let loaded = UIImage(data: bytes), !Task.isCancelled else { return }; Self.cache.countLimit = 40; Self.cache.setObject(loaded, forKey: avatar as NSString); image = loaded } catch { }
+        }
     }
 }
 struct SoftPressStyle: ButtonStyle {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     var quiet = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
@@ -395,6 +439,7 @@ struct SoftPressStyle: ButtonStyle {
     }
 }
 struct LoginView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @ObservedObject var model: ChatModel
     @State private var username = ""
     @State private var password = ""
@@ -408,7 +453,7 @@ struct LoginView: View {
                     Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 30)).foregroundStyle(Color(rgb: 0xB8DBCD))
                     Text("Хорошо, когда\nблизкие рядом.").font(.system(size: 34, weight: .semibold, design: .rounded)).foregroundStyle(.white)
                     Text("Пара слов. Знакомый голос.\nМоменты, которыми хочется делиться.").font(.subheadline).foregroundStyle(Color(rgb: 0xCAE2D8))
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(28).background(LinearGradient(colors: [Color(rgb: 0x103F34), Color(rgb: 0x23745A)], startPoint: .topLeading, endPoint: .bottomTrailing)).clipShape(RoundedRectangle(cornerRadius: 28))
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(28).background(LinearGradient(colors: [Appearance.deep, pine], startPoint: .topLeading, endPoint: .bottomTrailing)).clipShape(RoundedRectangle(cornerRadius: 28))
                 Text(register ? "Создать аккаунт" : "С возвращением").font(.system(.title2, design: .rounded).weight(.semibold)).foregroundStyle(Look.ink)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Юзернейм").font(.subheadline.weight(.semibold))
@@ -428,13 +473,14 @@ struct LoginView: View {
     }
 }
 struct InboxView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @ObservedObject var model: ChatModel
     @State private var profile: Profile?
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 14) {
-                    AvatarView(name: model.session?.user.username ?? "")
+                    AvatarView(name: model.session?.user.username ?? "", userID: model.session?.user.id, avatar: model.session?.user.avatar, token: model.session?.token)
                     VStack(alignment: .leading, spacing: 4) { Text("@\(model.session?.user.username ?? "")").font(.headline); Text("Ближе, чем кажется").font(.caption).foregroundStyle(Look.muted) }
                     Spacer()
                 }.padding(.bottom, 10)
@@ -443,29 +489,62 @@ struct InboxView: View {
                     TextField("Найти по @username", text: $model.query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { Task { await model.search() } }
                     Button { Task { await model.search() } } label: { Image(systemName: "arrow.right").font(.headline).frame(width: 38, height: 38).foregroundStyle(.white).background(pine, in: RoundedRectangle(cornerRadius: 12)) }.disabled(model.busy).accessibilityLabel("Найти человека")
                 }.padding(10).background(.white, in: RoundedRectangle(cornerRadius: 18))
-                ForEach(model.users) { user in Button { profile = user } label: { row(name: user.username, preview: "Открыть профиль", unread: 0) }.buttonStyle(.plain) }
+                ForEach(model.users) { user in Button { profile = user } label: { row(name: user.username, preview: "Открыть профиль", unread: 0, userID: user.id, avatar: user.avatar) }.buttonStyle(.plain) }
                 Text("Ваши разговоры").font(.system(.title2, design: .rounded).weight(.semibold)).padding(.top, 18).padding(.bottom, 6)
                 if model.chats.isEmpty { VStack(alignment: .leading, spacing: 10) { Text("Пока тихо").font(.title3.weight(.medium)); Text("Найдите близкого человека и начните первый разговор.").font(.subheadline).foregroundStyle(Look.muted) }.padding(.vertical, 32) }
-                ForEach(model.chats) { chat in Button { model.select(chat); Task { await model.refresh() } } label: { row(name: chat.username, preview: chat.lastText.isEmpty ? "Напишите первое сообщение" : chat.lastText, unread: chat.unread) }.buttonStyle(.plain).disabled(model.busy) }
+                ForEach(model.chats) { chat in Button { model.select(chat); Task { await model.refresh() } } label: { row(name: chat.username, preview: chat.lastText.isEmpty ? "Напишите первое сообщение" : chat.lastText, unread: chat.unread, userID: chat.peerId, avatar: chat.avatar) }.buttonStyle(.plain).disabled(model.busy) }
             }.padding(20).foregroundStyle(Look.ink)
         }.scrollDismissesKeyboard(.interactively)
         .sheet(item: $profile) { p in
-            VStack(spacing: 22) { AvatarView(name: p.username, size: 92); Text("@\(p.username)").font(.title2.weight(.semibold)); Text("Начните ваш разговор").foregroundStyle(Look.muted); Button { profile = nil; Task { await model.open(p) } } label: { Label("Написать", systemImage: "bubble.left").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()); Button("Закрыть") { profile = nil } }.padding(32).presentationDetents([.medium]).presentationDragIndicator(.visible)
+            VStack(spacing: 22) { AvatarView(name: p.username, size: 92, userID: p.id, avatar: p.avatar, token: model.session?.token); Text("@\(p.username)").font(.title2.weight(.semibold)); Text("Начните ваш разговор").foregroundStyle(Look.muted); Button { profile = nil; Task { await model.open(p) } } label: { Label("Написать", systemImage: "bubble.left").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()); Button("Закрыть") { profile = nil } }.padding(32).presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
     }
-    private func row(name: String, preview: String, unread: Int) -> some View {
-        HStack(spacing: 14) { AvatarView(name: name); VStack(alignment: .leading, spacing: 6) { Text("@\(name)").font(.subheadline.weight(.semibold)).lineLimit(1); Text(preview).font(.caption).foregroundStyle(Look.muted).lineLimit(1) }; Spacer(minLength: 4); if unread > 0 { Text(unread > 99 ? "99+" : "\(unread)").font(.caption2.bold()).padding(.horizontal, 7).padding(.vertical, 5).foregroundStyle(.white).background(pine, in: Capsule()) } }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 22)).contentShape(RoundedRectangle(cornerRadius: 22))
+    private func row(name: String, preview: String, unread: Int, userID: String, avatar: String?) -> some View {
+        HStack(spacing: 14) { AvatarView(name: name, userID: userID, avatar: avatar, token: model.session?.token); VStack(alignment: .leading, spacing: 6) { Text("@\(name)").font(.subheadline.weight(.semibold)).lineLimit(1); Text(preview).font(.caption).foregroundStyle(Look.muted).lineLimit(1) }; Spacer(minLength: 4); if unread > 0 { Text(unread > 99 ? "99+" : "\(unread)").font(.caption2.bold()).padding(.horizontal, 7).padding(.vertical, 5).foregroundStyle(.white).background(pine, in: Capsule()) } }.padding(15).background(.white, in: RoundedRectangle(cornerRadius: 22)).contentShape(RoundedRectangle(cornerRadius: 22))
     }
 }
 struct ConversationView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @EnvironmentObject var calls: CallsModel
     @ObservedObject var model: ChatModel
     @StateObject private var audio = VoiceAudio()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var editing: ChatMessage?
+    @State private var deleting: ChatMessage?
     @State private var gallery = false
     @State private var camera = false
     @State private var pickerChat: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewBuilder private func messageRow(_ m: ChatMessage) -> some View {
+        let own = m.sender == model.session?.user.id
+        if m.kind == "call" {
+            VStack(spacing: 10) {
+                Image(systemName: m.callStatus == "answered" ? "phone" : "phone.arrow.down.left").font(.title2).foregroundStyle(pine)
+                Text(m.callStatus == "answered" ? "Разговор · " + VoiceAudio.time(Double(m.callDuration ?? 0)) : own ? "Исходящий вызов · Без ответа" : "Вам звонили · Пропущенный вызов").font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                Button(m.callStatus == "missed" && !own ? "Перезвонить" : "Позвонить") { if let chat = model.selected { calls.dial(chat.username) } }.buttonStyle(SoftPressStyle(quiet: true)).disabled(model.busy || model.recording || calls.busy)
+                Text(Date(timeIntervalSince1970: m.at/1000), format: .dateTime.hour().minute()).font(.caption2).foregroundStyle(Look.muted)
+            }.padding(18).frame(maxWidth: .infinity).background(Look.soft, in: RoundedRectangle(cornerRadius: 22))
+        } else {
+            HStack {
+                if own { Spacer(minLength: 38) }
+                VStack(alignment: .leading, spacing: 8) {
+                    if (m.deletedAt ?? 0) > 0 { Text("Сообщение удалено").italic().opacity(0.75) }
+                    else {
+                        if let photo = m.photo, let chat = model.selected { MessagePhoto(model: model, photo: photo, conversation: chat.id) }
+                        if let voice = m.voice, let chat = model.selected { Button { Task { await audio.fetch(model: model, id: voice, conversation: chat.id) } } label: { Label(audio.loadingID == voice ? "Загрузка…" : "Голосовое · \(VoiceAudio.time(Double(m.duration ?? 0)/1000))", systemImage: audio.playingID == voice ? "stop.fill" : "play.fill") }.buttonStyle(.plain).disabled(audio.capturing).padding(.vertical, 8) }
+                        if !m.text.isEmpty { Text(m.text).textSelection(.enabled) }
+                    }
+                    HStack {
+                        Text(Date(timeIntervalSince1970: m.at/1000), format: .dateTime.hour().minute()).font(.caption2).opacity(0.7)
+                        if (m.editedAt ?? 0) > 0 && (m.deletedAt ?? 0) == 0 { Text("изменено").font(.caption2).opacity(0.7) }
+                        if own && (m.deletedAt ?? 0) == 0 { Menu { Button("Изменить") { editing = m }; Button("Удалить у всех", role: .destructive) { deleting = m } } label: { Image(systemName: "ellipsis").padding(.horizontal, 8).padding(.vertical, 5) }.disabled(model.busy || model.recording).accessibilityLabel("Действия с сообщением") }
+                    }
+                    if own { Text(model.peerRead >= m.seq ? "Прочитано" : "Отправлено").font(.caption2).opacity(0.7) }
+                }.padding(15).background { if own { Look.gradient } else { Color.white } }.foregroundStyle(own ? Color.white : Look.ink).clipShape(RoundedRectangle(cornerRadius: 20))
+                if !own { Spacer(minLength: 38) }
+            }
+        }
+    }
     func picked(_ result: Result<Data, Error>?) {
         gallery = false; camera = false
         guard pickerChat == model.selected?.id, let result else { return }
@@ -482,29 +561,12 @@ struct ConversationView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) { AvatarView(name: model.selected?.username ?? "", size: 40); VStack(alignment: .leading, spacing: 3) { Text("@\(model.selected?.username ?? "")").font(.subheadline.weight(.semibold)); Text("Личная переписка").font(.caption2).foregroundStyle(Look.muted) }; Spacer() }.padding(.horizontal, 20).padding(.vertical, 12).background(.white)
+            HStack(spacing: 12) { AvatarView(name: model.selected?.username ?? "", size: 40, userID: model.selected?.peerId, avatar: model.selected?.avatar, token: model.session?.token); VStack(alignment: .leading, spacing: 3) { Text("@\(model.selected?.username ?? "")").font(.subheadline.weight(.semibold)); Text("Личная переписка").font(.caption2).foregroundStyle(Look.muted) }; Spacer() }.padding(.horizontal, 20).padding(.vertical, 12).background(.white)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         if model.messages.isEmpty { VStack(spacing: 10) { Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 36)).foregroundStyle(pine); Text("Скажите «привет»").font(.title2.weight(.semibold)); Text("И начнётся ваш разговор").font(.subheadline).foregroundStyle(Look.muted) }.frame(maxWidth: .infinity).padding(.top, 70) }
-                        ForEach(model.messages) { m in
-                            let own = m.sender == model.session?.user.id
-                            HStack {
-                                if own { Spacer(minLength: 38) }
-                                VStack(alignment: .leading, spacing: 8) {
-                                    if let photo = m.photo, let chat = model.selected { MessagePhoto(model: model, photo: photo, conversation: chat.id) }
-                                    if let voice = m.voice, let chat = model.selected {
-                                        Button { Task { await audio.fetch(model: model, id: voice, conversation: chat.id) } } label: {
-                                            Label(audio.loadingID == voice ? "Загрузка…" : "Голосовое · \(VoiceAudio.time(Double(m.duration ?? 0)/1000))", systemImage: audio.playingID == voice ? "stop.fill" : "play.fill")
-                                        }.buttonStyle(.plain).disabled(audio.capturing).padding(.vertical, 8)
-                                    }
-                                    if !m.text.isEmpty { Text(m.text).textSelection(.enabled) }
-                                    Text(Date(timeIntervalSince1970: m.at / 1000), format: .dateTime.hour().minute()).font(.caption2).opacity(0.7)
-                                    if own { Text(model.peerRead >= m.seq ? "Прочитано" : "Отправлено").font(.caption2).opacity(0.7) }
-                                }.padding(15).background { if own { Look.gradient } else { Color.white } }.foregroundStyle(own ? Color.white : Look.ink).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                                if !own { Spacer(minLength: 38) }
-                            }.id(m.seq).transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
+                        ForEach(model.messages) { m in messageRow(m).id(m.seq).transition(.move(edge: .bottom).combined(with: .opacity)) }
                     }.padding(18).animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: model.messages.count)
                 }.onChange(of: model.messages.count) { _ in if let last = model.messages.last { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { proxy.scrollTo(last.seq, anchor: .bottom) } } }
             }
@@ -540,6 +602,9 @@ struct ConversationView: View {
                 Button { audio.stopPlayback(); Task { await model.send() } } label: { Image(systemName: "arrow.up").font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44).foregroundStyle(.white).background(Look.gradient, in: RoundedRectangle(cornerRadius: 15)) }.buttonStyle(.plain).disabled(model.busy || audio.capturing || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.photo == nil && model.voice == nil)).accessibilityLabel("Отправить")
             }.padding(7).background(.white, in: RoundedRectangle(cornerRadius: 22)).padding(.horizontal, 12).padding(.vertical, 10)
         }.sheet(isPresented: $gallery) { GalleryPicker(completion: picked).ignoresSafeArea() }
+        .sheet(item: $editing) { message in MessageEditView(model: model, message: message) }
+        .confirmationDialog("Удалить сообщение у вас и у собеседника?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) { Button("Удалить у всех", role: .destructive) { if let message = deleting { Task { _ = await model.mutate(message, text: nil) } }; deleting = nil }; Button("Отмена", role: .cancel) { deleting = nil } }
+        .onChange(of: model.messages) { rows in if let playing = audio.playingID, playing != "draft", !rows.contains(where: { $0.voice == playing && ($0.deletedAt ?? 0) == 0 }) { audio.stopPlayback() } }
         .fullScreenCover(isPresented: $camera) { CameraPicker(completion: picked).ignoresSafeArea() }
         .onChange(of: calls.busy) { if $0 { audio.stopPlayback() } }
         .onChange(of: audio.capturing) { model.recording = $0 }
@@ -548,6 +613,7 @@ struct ConversationView: View {
     }
 }
 struct LogoutView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @ObservedObject var model: ChatModel
     @Environment(\.dismiss) private var dismiss
     @State private var password = ""
@@ -567,10 +633,48 @@ struct LogoutView: View {
         }.interactiveDismissDisabled(model.busy)
     }
 }
+struct MessageEditView: View {
+    @ObservedObject var model: ChatModel
+    let message: ChatMessage
+    @State private var text: String
+    @Environment(\.dismiss) private var dismiss
+    init(model: ChatModel, message: ChatMessage) { self.model = model; self.message = message; _text = State(initialValue: message.text) }
+    var body: some View { NavigationStack { VStack(spacing: 18) { TextEditor(text: $text).frame(minHeight: 120); if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote) }; Button { Task { if await model.mutate(message, text: text) { dismiss() } } } label: { Text("Сохранить").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()).disabled(model.busy || text.utf16.count > 4000) }.padding(22).navigationTitle("Изменить сообщение").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(model.busy) } } }.interactiveDismissDisabled(model.busy) }
+}
+struct SettingsView: View {
+    @ObservedObject var model: ChatModel
+    @AppStorage("ryadom.accent") private var accent = 0
+    @State private var username = ""
+    @State private var gallery = false
+    @State private var status = ""
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            TabView {
+                ScrollView { VStack(alignment: .leading, spacing: 20) {
+                    AvatarView(name: model.session?.user.username ?? "", size: 96, userID: model.session?.user.id, avatar: model.session?.user.avatar, token: model.session?.token)
+                    Button("Выбрать аватарку") { gallery = true }.buttonStyle(SoftPressStyle()).disabled(model.busy)
+                    Button("Убрать аватарку") { Task { if await model.updateProfile(["action": "removeAvatar"]) { status = "Аватарка удалена" } } }.disabled(model.busy)
+                    Text("Юзернейм").font(.headline)
+                    TextField("username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled().padding(14).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    Text("3–24 символа: a–z, цифры и _. Переписки сохранятся.").font(.caption).foregroundStyle(Look.muted)
+                    Button { Task { if await model.updateProfile(["action": "rename", "username": username]) { username = model.session?.user.username ?? ""; status = "Юзернейм сохранён" } } } label: { Text("Сохранить юзернейм").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()).disabled(model.busy)
+                    if !status.isEmpty { Text(status).foregroundStyle(pine).font(.footnote) }
+                    if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote) }
+                }.padding(24) }.tabItem { Label("Account", systemImage: "person.crop.circle") }
+                ScrollView { VStack(alignment: .leading, spacing: 18) { Text("Цвет мессенджера").font(.title2.weight(.semibold)); Text("Сохраняется на этом устройстве.").font(.caption).foregroundStyle(Look.muted); ForEach(Appearance.names.indices, id: \.self) { index in Button { accent = index } label: { HStack { Circle().fill(Color(rgb: Appearance.values[index])).frame(width: 32, height: 32); Text(Appearance.names[index]).foregroundStyle(Look.ink); Spacer(); if accent == index { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(rgb: Appearance.values[index])) } }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18)) }.buttonStyle(.plain) } }.padding(24) }.tabItem { Label("Стиль", systemImage: "paintpalette") }
+            }.background(paper).tint(pine).navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() }.disabled(model.busy) } }
+        }.onAppear { username = model.session?.user.username ?? ""; model.error = "" }
+        .sheet(isPresented: $gallery) { GalleryPicker { result in gallery = false; guard let result else { return }; do { let data = try result.get(); guard let image = UIImage(data: data) else { throw ChatError("Не удалось открыть фото.") }; let avatar = try PhotoEncoding.jpeg(image, maxDimension: 512, maxBytes: 204800); Task { if await model.updateProfile(["action": "setAvatar", "data": avatar.base64EncodedString()]) { status = "Аватарка сохранена" } } } catch { model.error = error.localizedDescription } }.ignoresSafeArea() }
+        .interactiveDismissDisabled(model.busy)
+    }
+}
 struct ContentView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @StateObject private var model = ChatModel()
     @StateObject private var calls = CallsModel()
     @State private var logoutPrompt = false
+    @State private var settings = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
@@ -590,7 +694,7 @@ struct ContentView: View {
             .toolbar {
                 if let chat = model.selected { ToolbarItem(placement: .navigationBarTrailing) { Button { calls.dial(chat.username) } label: { Image(systemName: "phone.fill") }.disabled(model.busy || model.recording || calls.busy).accessibilityLabel("Позвонить") } }
                 if model.selected != nil { ToolbarItem(placement: .navigationBarLeading) { Button("Назад") { model.select(nil) }.disabled(model.busy || model.recording) } }
-                else if model.session != nil { ToolbarItem(placement: .navigationBarLeading) { Button { LocalNotices.shared.settings() } label: { Image(systemName: "bell") }.accessibilityLabel("Уведомления") }; ToolbarItem(placement: .navigationBarTrailing) { Button("Выйти") { model.error = ""; logoutPrompt = true }.disabled(model.busy) } }
+                else if model.session != nil { ToolbarItem(placement: .navigationBarLeading) { Button { LocalNotices.shared.settings() } label: { Image(systemName: "bell") }.accessibilityLabel("Уведомления") }; ToolbarItem(placement: .navigationBarTrailing) { HStack { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Настройки"); Button("Выйти") { model.error = ""; logoutPrompt = true }.disabled(model.busy) } } }
             }
         }.tint(pine).preferredColorScheme(.light)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.selected?.id)
@@ -608,6 +712,7 @@ struct ContentView: View {
         .onChange(of: model.session?.token) { LocalNotices.shared.configure(account: model.session?.user.id); calls.sync(token: $0, active: scenePhase != .background) }
         .onChange(of: scenePhase) { if $0 != .inactive { calls.sync(token: model.session?.token, active: $0 == .active) } }
         .fullScreenCover(isPresented: Binding(get: { calls.busy }, set: { if !$0 && calls.busy { calls.hangup() } })) { CallView(calls: calls) }
+        .sheet(isPresented: $settings) { SettingsView(model: model) }
         .sheet(isPresented: $logoutPrompt) { LogoutView(model: model).presentationDetents([.medium, .large]) }
     }
 }

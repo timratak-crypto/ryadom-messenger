@@ -220,6 +220,7 @@ final class CallAudioEngine {
 }
 
 struct CallView: View {
+    @AppStorage("ryadom.accent") private var accentIndex = 0
     @ObservedObject var calls: CallsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
@@ -242,7 +243,7 @@ struct CallView: View {
             Button { calls.hangup() } label: { Label("Завершить", systemImage: "phone.down.fill").font(.headline).frame(maxWidth: .infinity).padding(18).foregroundStyle(.white).background(Color(rgb: 0xC65B60), in: RoundedRectangle(cornerRadius: 20)) }.buttonStyle(.plain)
             if !calls.note.isEmpty { Text(calls.note).font(.footnote).foregroundStyle(.white) }
             Text("Оставьте приложение открытым во время звонка").font(.caption2).foregroundStyle(Color.white.opacity(0.5)).multilineTextAlignment(.center)
-        }.padding(28).background(LinearGradient(colors: [Color(rgb: 0x123D33), Color(rgb: 0x092A23)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).tint(pine)
+        }.padding(28).background(LinearGradient(colors: [Appearance.deep, Color.black], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).tint(pine)
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true; if !reduceMotion { withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { pulse = true } } }
         .interactiveDismissDisabled()
     }

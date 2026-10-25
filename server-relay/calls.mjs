@@ -1,16 +1,22 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 
-// Ephemeral, authenticated audio relay. No recording, database writes or audio logs.
+// Authenticated audio relay. No audio recording; only call outcome metadata is persisted.
 // Protocol 1: raw little-endian PCM, 16000 Hz, one channel, signed 16-bit.
-export function attachCalls(server, { authenticate, resolvePeer, ringMs = 35000, heartbeatMs = 20000, reauthMs = 60000, authGraceMs = 180000 } = {}) {
+export function attachCalls(server, { authenticate, resolvePeer, recordCall = async () => {}, ringMs = 35000, heartbeatMs = 20000, reauthMs = 60000, authGraceMs = 180000 } = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 6400, perMessageDeflate: false });
   const users = new Map(), occupied = new Map(), calls = new Map(), attempts = new Map();
   let pending = 0, closed = false;
+  const historyTasks = new Set();
+  function history(call) {
+    const event = { id: call.id, from: call.from, to: call.to, createdAt: call.createdAt, answeredAt: call.answeredAt ?? null, endedAt: Date.now() };
+    const task = Promise.resolve().then(() => recordCall(event)).catch(() => console.error('Call history temporarily unavailable'));
+    historyTasks.add(task);void task.finally(() => historyTasks.delete(task));
+  }
   const send = (ws, value) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
   function end(call, reason) {
     if (!call || !calls.delete(call.id)) return;
-    clearTimeout(call.timer);
+    clearTimeout(call.timer);history(call);
     occupied.delete(call.from); occupied.delete(call.to);
     for (const ws of call.sockets) send(ws, { type: 'ended', id: call.id, reason });
   }
@@ -79,10 +85,11 @@ export function attachCalls(server, { authenticate, resolvePeer, ringMs = 35000,
         const peer = await resolvePeer(ws.authorization, value.username);
         if (ws.readyState !== WebSocket.OPEN || ws.dialGeneration !== generation) return;
         if (!validUser(peer) || peer.username !== value.username || peer.id === ws.user.id) return fail('invalid');
-        if (occupied.has(ws.user.id) || occupied.has(peer.id)) return fail('busy');
+        if (occupied.has(ws.user.id)) return fail('busy');
+        if (occupied.has(peer.id)) { history({ id: randomUUID(), from: ws.user.id, to: peer.id, createdAt: Date.now() }); return fail('busy'); }
         const targets = [...(users.get(peer.id) || [])].filter(s => s.readyState === WebSocket.OPEN);
-        if (!targets.length) return fail('offline');
-        const call = { id: randomUUID(), from: ws.user.id, to: peer.id, caller: ws, callee: null, sockets: [ws, ...targets] };
+        if (!targets.length) { history({ id: randomUUID(), from: ws.user.id, to: peer.id, createdAt: Date.now() }); return fail('offline'); }
+        const call = { id: randomUUID(), createdAt: Date.now(), answeredAt: null, from: ws.user.id, to: peer.id, caller: ws, callee: null, sockets: [ws, ...targets] };
         calls.set(call.id, call); occupied.set(call.from, call.id); occupied.set(call.to, call.id);
         call.timer = setTimeout(() => end(call, 'unanswered'), ringMs); call.timer.unref();
         send(ws, { type: 'ringing', id: call.id, username: peer.username, requestId });
@@ -101,7 +108,7 @@ export function attachCalls(server, { authenticate, resolvePeer, ringMs = 35000,
     const call = calls.get(value?.id);
     if (!call || !call.sockets.includes(ws)) return;
     if (value.type === 'accept' && ws.user.id === call.to && !call.callee) {
-      call.callee = ws; clearTimeout(call.timer);
+      call.callee = ws; call.answeredAt = Date.now(); clearTimeout(call.timer);
       for (const target of call.sockets) {
         if (target !== call.caller && target !== ws) send(target, { type: 'ended', id: call.id, reason: 'answered_elsewhere' });
       }
@@ -118,7 +125,7 @@ export function attachCalls(server, { authenticate, resolvePeer, ringMs = 35000,
         ws.checking = true;
         void authenticate(ws.authorization).then(user => {
           if (!validUser(user) || user.id !== ws.user.id) ws.close(1008, 'Session expired');
-          else ws.lastAuth = Date.now();
+          else { ws.user = user; ws.lastAuth = Date.now(); }
         }).catch(error => {
           // A transient upstream outage is not a revoked session. Never extend the
           // bounded lease without a successful authenticated check.
@@ -127,7 +134,7 @@ export function attachCalls(server, { authenticate, resolvePeer, ringMs = 35000,
       }
     }
   }, heartbeatMs); heartbeat.unref();
-  const close = () => { closed = true; clearInterval(heartbeat); for (const call of calls.values()) end(call, 'disconnected'); for (const ws of wss.clients) ws.terminate(); wss.close(); };
+  const close = () => { closed = true; clearInterval(heartbeat); for (const call of calls.values()) end(call, 'disconnected'); for (const ws of wss.clients) ws.terminate(); wss.close(); return Promise.allSettled([...historyTasks]); };
   server.on('close', close);
   return { close };
 }

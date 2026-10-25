@@ -60,7 +60,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
- private static final int PINE=Ui.ACCENT,PAPER=Ui.PAPER,INK=Ui.INK,MUTED=Ui.MUTED;
+
  private static final String SERVER="https://ryadom-family-chat.onrender.com",KEY_ALIAS="ryadom.account.v2";
  private final Handler ui=new Handler(Looper.getMainLooper());
  private final ExecutorService images=Executors.newFixedThreadPool(2);
@@ -94,14 +94,20 @@ public class MainActivity extends Activity {
  private EditText username,password,confirm,query,draft;
  private Button authButton,searchButton,sendButton;
  private boolean active,busy,polling,register,sessionLoaded;
- private long cursor,peerRead;
+ private long cursor,peerRead,changesCursor;
+ private boolean rebuildMessages;
+ private final LruCache<String,Bitmap> avatars=new LruCache<>(40);
+ private AlertDialog settingsDialog;
+ private int settingsTab;
+ private TextView peerHeader;
+ private android.widget.FrameLayout peerAvatar;
  private String inboxAppearance="",messageDay="";
  private String searchText="",retryText="",retryId="",retryChat="";
  private final Runnable ticker=new Runnable(){public void run(){if(active){refresh();ui.postDelayed(this,3000);}}};
  static class ApiError extends Exception {final int code;ApiError(int c,String m){super(m);code=c;}}
  private static JSONObject json(Object... pairs){JSONObject r=new JSONObject();try{for(int i=0;i<pairs.length;i+=2)r.put((String)pairs[i],pairs[i+1]);}catch(Exception e){throw new IllegalArgumentException(e);}return r;}
  @Override public void onCreate(Bundle state){
-  super.onCreate(state);audio=new VoiceAudio(this,ui);calls=new LiveCalls(this,ui,new LiveCalls.Host(){public void notice(String text){if(status!=null)status.setText(text);}public void stopVoice(){stopAudio();}public boolean recording(){return recording;}});if(state!=null){pickerChat=state.getString("pickerChat","");String chat=state.getString("selected");try{if(chat!=null)selected=new JSONObject(chat);}catch(Exception ignored){}}
+  super.onCreate(state);Ui.loadTheme(this);audio=new VoiceAudio(this,ui);calls=new LiveCalls(this,ui,new LiveCalls.Host(){public void notice(String text){if(status!=null)status.setText(text);}public void stopVoice(){stopAudio();}public boolean recording(){return recording;}});if(state!=null){pickerChat=state.getString("pickerChat","");String chat=state.getString("selected");try{if(chat!=null)selected=new JSONObject(chat);}catch(Exception ignored){}}
   busy=true;screen();network.execute(()->{
    try{JSONObject saved=loadSession(this);ui.post(()->{if(isDestroyed())return;sessionLoaded=true;session=saved;if(session==null)selected=null;busy=false;screen();consumePhoto();refresh();});}
    catch(Exception e){ui.post(()->{if(isDestroyed())return;busy=false;screen();error(e,true);});}
@@ -121,14 +127,14 @@ public class MainActivity extends Activity {
  private void gap(LinearLayout p,int h){p.addView(new View(this),lp(1,dp(h)));}
  private Button button(String label,View.OnClickListener action){return Ui.button(this,label,action,false);}
  private Button quiet(String label,View.OnClickListener action){return Ui.button(this,label,action,true);}
- private TextView heading(String label,int size){TextView t=text(label,size,INK);t.setTypeface(Typeface.create("sans-serif-medium",0));return t;}
+ private TextView heading(String label,int size){TextView t=text(label,size,Ui.INK);t.setTypeface(Typeface.create("sans-serif-medium",0));return t;}
  private View contact(JSONObject person,boolean search){
-  String name=person.optString("username");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(14),dp(15),dp(14),dp(15));row.setBackground(new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x2248a880),bg(Color.WHITE,20),null));row.setClickable(true);row.setFocusable(true);row.addView(Ui.avatar(this,name,48));
-  LinearLayout copy=column();copy.setPadding(dp(14),0,dp(8),0);TextView who=heading("@"+name,16);who.setSingleLine();who.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(who);String preview=search?"Открыть профиль":person.optString("lastText");TextView sub=text(preview.isEmpty()?"Напишите первое сообщение":preview,13,MUTED);sub.setSingleLine();sub.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(sub);row.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
-  int unread=person.optInt("unread");if(unread>0){TextView badge=text(unread>99?"99+":String.valueOf(unread),11,Color.WHITE);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(7),dp(4),dp(7),dp(4));badge.setBackground(bg(PINE,10));row.addView(badge);}
+  String name=person.optString("username");LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(14),dp(15),dp(14),dp(15));row.setBackground(new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x2248a880),bg(Color.WHITE,20),null));row.setClickable(true);row.setFocusable(true);row.addView(profileAvatar(person,48));
+  LinearLayout copy=column();copy.setPadding(dp(14),0,dp(8),0);TextView who=heading("@"+name,16);who.setSingleLine();who.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(who);String preview=search?"Открыть профиль":person.optString("lastText");TextView sub=text(preview.isEmpty()?"Напишите первое сообщение":preview,13,Ui.MUTED);sub.setSingleLine();sub.setEllipsize(android.text.TextUtils.TruncateAt.END);copy.addView(sub);row.addView(copy,new LinearLayout.LayoutParams(0,-2,1));
+  int unread=person.optInt("unread");if(unread>0){TextView badge=text(unread>99?"99+":String.valueOf(unread),11,Color.WHITE);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(7),dp(4),dp(7),dp(4));badge.setBackground(bg(Ui.ACCENT,10));row.addView(badge);}
   row.setOnClickListener(v->{if(busy)return;if(search)new AlertDialog.Builder(this).setTitle("@"+name).setMessage("Начните ваш разговор").setPositiveButton("Написать",(d,w)->open(person)).setNegativeButton("Закрыть",null).show();else{select(person);refresh();}});return row;
  }
- private EditText input(String hint,int max,boolean secret){EditText e=new EditText(this);e.setTextSize(16);e.setTextColor(INK);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(12),dp(10),dp(12),dp(10));GradientDrawable surface=bg(Color.WHITE,16);surface.setStroke(dp(1),0xffdce8e2);e.setBackground(surface);e.setMinimumHeight(dp(48));e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});e.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));e.setSingleLine(true);return e;}
+ private EditText input(String hint,int max,boolean secret){EditText e=new EditText(this);e.setTextSize(16);e.setTextColor(Ui.INK);e.setHintTextColor(Ui.MUTED);e.setHint(hint);e.setPadding(dp(12),dp(10),dp(12),dp(10));GradientDrawable surface=bg(Color.WHITE,16);surface.setStroke(dp(1),0xffdce8e2);e.setBackground(surface);e.setMinimumHeight(dp(48));e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(max)});e.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));e.setSingleLine(true);return e;}
  private void syncCalls(){if(calls!=null)calls.sync(session==null?null:session.optString("token"),active);NotificationService.visible(active,selected==null?null:selected.optString("id"));syncNotifications();}
  private void syncNotifications(){
   if(!active||!sessionLoaded||session==null)return;
@@ -148,39 +154,39 @@ public class MainActivity extends Activity {
  private void screen(){
   syncCalls();
   inboxAppearance="";messageDay="";chatList=null;searchResults=null;messageList=null;receipts.clear();authButton=null;searchButton=null;sendButton=null;micButton=null;attachment=null;recordingLabel=null;
-  root=column();root.setBackgroundColor(PAPER);root.setPadding(dp(18),dp(12),dp(18),dp(8));
+  getWindow().setStatusBarColor(Ui.PAPER);getWindow().setNavigationBarColor(Ui.PAPER);root=column();root.setBackgroundColor(Ui.PAPER);root.setPadding(dp(18),dp(12),dp(18),dp(8));
   root.setOnApplyWindowInsetsListener((v,i)->{v.setPadding(dp(18)+i.getSystemWindowInsetLeft(),dp(12)+i.getSystemWindowInsetTop(),dp(18)+i.getSystemWindowInsetRight(),dp(8)+i.getSystemWindowInsetBottom());return i;});
-  setContentView(root);root.requestApplyInsets();title=heading("Рядом",30);if(selected==null){root.addView(title);TextView tagline=text("Ближе, чем кажется",12,MUTED);root.addView(tagline);gap(root,20);}
-  status=text("",12,MUTED);
+  setContentView(root);root.requestApplyInsets();title=heading("Рядом",30);if(selected==null){root.addView(title);TextView tagline=text("Ближе, чем кажется",12,Ui.MUTED);root.addView(tagline);gap(root,20);}
+  status=text("",12,Ui.MUTED);
   if(session==null)authScreen();else if(selected==null)inboxScreen();else conversationScreen();
   Ui.enter(root,12);
   status.setPadding(dp(4),dp(6),dp(4),0);root.addView(status);updateButtons();
  }
  private void authScreen(){
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);LinearLayout form=column();scroll.addView(form);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-  LinearLayout hero=column();hero.setPadding(dp(24),dp(26),dp(24),dp(26));hero.setBackground(Ui.gradient(this,0xff103f34,0xff23745a,26));TextView big=heading("Хорошо, когда\nблизкие рядом.",30);big.setTextColor(Color.WHITE);hero.addView(big);gap(hero,12);hero.addView(text("Пара слов. Знакомый голос.\nМоменты, которыми хочется делиться.",14,0xffcbe4d8));form.addView(hero);gap(form,26);
-  form.addView(heading(register?"Создать аккаунт":"С возвращением",25));gap(form,18);form.addView(heading("Юзернейм",13));gap(form,6);username=input("username",25,false);form.addView(username);gap(form,5);form.addView(text("3–24 символа: a–z, 0–9, _",11,MUTED));gap(form,18);
+  LinearLayout hero=column();hero.setPadding(dp(24),dp(26),dp(24),dp(26));hero.setBackground(Ui.gradient(this,Ui.mix(Ui.ACCENT,Color.BLACK,.35f),Ui.ACCENT,26));TextView big=heading("Хорошо, когда\nблизкие рядом.",30);big.setTextColor(Color.WHITE);hero.addView(big);gap(hero,12);hero.addView(text("Пара слов. Знакомый голос.\nМоменты, которыми хочется делиться.",14,0xffcbe4d8));form.addView(hero);gap(form,26);
+  form.addView(heading(register?"Создать аккаунт":"С возвращением",25));gap(form,18);form.addView(heading("Юзернейм",13));gap(form,6);username=input("username",25,false);form.addView(username);gap(form,5);form.addView(text("3–24 символа: a–z, 0–9, _",11,Ui.MUTED));gap(form,18);
   password=input("Пароль — от 8 символов",128,true);form.addView(password);gap(form,12);confirm=input("Повторите пароль",128,true);if(register){form.addView(confirm);gap(form,12);}
-  authButton=button(register?"Зарегистрироваться":"Войти",v->authenticate());form.addView(authButton,lp(-1,dp(50)));gap(form,10);form.addView(quiet(register?"Уже есть аккаунт? Войти":"Нет аккаунта? Регистрация",v->{if(busy)return;register=!register;screen();}),lp(-1,dp(48)));gap(form,18);form.addView(text("Сохраните пароль в надёжном месте. Восстановление через почту пока недоступно.",11,MUTED));gap(form,12);
+  authButton=button(register?"Зарегистрироваться":"Войти",v->authenticate());form.addView(authButton,lp(-1,dp(50)));gap(form,10);form.addView(quiet(register?"Уже есть аккаунт? Войти":"Нет аккаунта? Регистрация",v->{if(busy)return;register=!register;screen();}),lp(-1,dp(48)));gap(form,18);form.addView(text("Сохраните пароль в надёжном месте. Восстановление через почту пока недоступно.",11,Ui.MUTED));gap(form,12);
  }
  private void inboxScreen(){
-  LinearLayout me=new LinearLayout(this);me.setGravity(Gravity.CENTER_VERTICAL);me.addView(Ui.avatar(this,session.optJSONObject("user").optString("username"),42));TextView name=heading("@"+session.optJSONObject("user").optString("username"),15);name.setPadding(dp(12),0,0,0);me.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button settings=quiet("•••",v->{android.widget.PopupMenu menu=new android.widget.PopupMenu(this,v);menu.getMenu().add("Уведомления");menu.getMenu().add("Выйти");menu.setOnMenuItemClickListener(item->{if(item.getTitle().equals("Выйти"))logout();else notificationSettings();return true;});menu.show();});settings.setContentDescription("Настройки аккаунта");me.addView(settings,lp(dp(48),dp(48)));root.addView(me);gap(root,20);
+  LinearLayout me=new LinearLayout(this);me.setGravity(Gravity.CENTER_VERTICAL);me.addView(profileAvatar(session.optJSONObject("user"),42));TextView name=heading("@"+session.optJSONObject("user").optString("username"),15);name.setPadding(dp(12),0,0,0);me.addView(name,new LinearLayout.LayoutParams(0,-2,1));Button settings=quiet("•••",v->{android.widget.PopupMenu menu=new android.widget.PopupMenu(this,v);menu.getMenu().add("Настройки");menu.getMenu().add("Уведомления");menu.getMenu().add("Выйти");menu.setOnMenuItemClickListener(item->{if(item.getTitle().equals("Выйти"))logout();else if(item.getTitle().equals("Настройки"))showSettings();else notificationSettings();return true;});menu.show();});settings.setContentDescription("Настройки аккаунта");me.addView(settings,lp(dp(48),dp(48)));root.addView(me);gap(root,20);
   LinearLayout search=new LinearLayout(this);search.setGravity(Gravity.CENTER_VERTICAL);query=input("Найти по @username",25,false);query.setText(searchText);search.addView(query,new LinearLayout.LayoutParams(0,dp(50),1));searchButton=Ui.icon(this,"search","Найти человека",v->search(),false);LinearLayout.LayoutParams searchSize=lp(dp(48),dp(48));searchSize.leftMargin=dp(8);search.addView(searchButton,searchSize);root.addView(search);gap(root,18);
   ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);LinearLayout content=column();scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));searchResults=column();content.addView(searchResults);content.addView(heading("Ваши разговоры",23));gap(content,12);chatList=column();content.addView(chatList);renderInbox();renderSearch();
  }
  private void renderSearch(){if(searchResults==null)return;searchResults.removeAllViews();for(int i=0;i<users.length();i++){searchResults.addView(contact(users.optJSONObject(i),true),lp(-1,-2));gap(searchResults,8);}if(users.length()>0)gap(searchResults,12);}
  private void renderInbox(){
   if(chatList==null)return;String signature=chats.toString();if(signature.equals(inboxAppearance))return;inboxAppearance=signature;chatList.removeAllViews();
-  if(chats.length()==0){gap(chatList,30);chatList.addView(heading("Пока тихо",22));gap(chatList,10);chatList.addView(text("Найдите близкого человека\nи начните первый разговор.",15,MUTED));}
+  if(chats.length()==0){gap(chatList,30);chatList.addView(heading("Пока тихо",22));gap(chatList,10);chatList.addView(text("Найдите близкого человека\nи начните первый разговор.",15,Ui.MUTED));}
   for(int i=0;i<chats.length();i++){chatList.addView(contact(chats.optJSONObject(i),false),lp(-1,-2));gap(chatList,8);}
  }
  private void conversationScreen(){
-  LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);Button back=Ui.icon(this,"back","Назад к сообщениям",v->{if(busy||recording)return;select(null);refresh();},true);header.addView(back,lp(dp(44),dp(48)));TextView avatar=Ui.avatar(this,selected.optString("username"),40);LinearLayout.LayoutParams avatarSize=lp(dp(40),dp(40));avatarSize.setMargins(dp(10),0,dp(12),0);header.addView(avatar,avatarSize);LinearLayout names=column();TextView peer=heading("@"+selected.optString("username"),17);peer.setSingleLine();peer.setEllipsize(android.text.TextUtils.TruncateAt.END);names.addView(peer);names.addView(text("Личная переписка",11,MUTED));header.addView(names,new LinearLayout.LayoutParams(0,-2,1));header.addView(Ui.icon(this,"phone","Позвонить",v->{if(!busy&&!recording&&selected!=null)calls.dial(selected.optString("username"));},true),lp(dp(48),dp(48)));root.addView(header);gap(root,12);
+  LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);Button back=Ui.icon(this,"back","Назад к сообщениям",v->{if(busy||recording)return;select(null);refresh();},true);header.addView(back,lp(dp(44),dp(48)));peerAvatar=new android.widget.FrameLayout(this);peerAvatar.addView(profileAvatar(selected,40));View avatar=peerAvatar;LinearLayout.LayoutParams avatarSize=lp(dp(40),dp(40));avatarSize.setMargins(dp(10),0,dp(12),0);header.addView(avatar,avatarSize);LinearLayout names=column();TextView peer=heading("@"+selected.optString("username"),17);peerHeader=peer;peer.setSingleLine();peer.setEllipsize(android.text.TextUtils.TruncateAt.END);names.addView(peer);names.addView(text("Личная переписка",11,Ui.MUTED));header.addView(names,new LinearLayout.LayoutParams(0,-2,1));header.addView(Ui.icon(this,"phone","Позвонить",v->{if(!busy&&!recording&&selected!=null)calls.dial(selected.optString("username"));},true),lp(dp(48),dp(48)));root.addView(header);gap(root,12);
   messageScroll=new ScrollView(this);messageScroll.setVerticalScrollBarEnabled(false);messageList=column();messageList.setPadding(dp(2),dp(8),dp(2),dp(8));messageScroll.addView(messageList);root.addView(messageScroll,new LinearLayout.LayoutParams(-1,0,1));attachment=column();root.addView(attachment);showAttachment();
   LinearLayout composer=new LinearLayout(this);composer.setGravity(Gravity.BOTTOM);composer.setPadding(dp(4),dp(5),dp(4),dp(5));composer.setBackground(bg(Color.WHITE,22));Button add=Ui.icon(this,"plus","Прикрепить фотографию",v->attach(),true);composer.addView(add,lp(dp(44),dp(48)));draft=input("Сообщение…",4000,false);draft.setBackgroundColor(Color.TRANSPARENT);draft.setPadding(dp(10),dp(12),dp(6),dp(12));draft.setSingleLine(false);draft.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);draft.setMaxLines(5);String saved=drafts.get(selected.optString("id"));draft.setText(saved==null?"":saved);composer.addView(draft,new LinearLayout.LayoutParams(0,-2,1));
   micButton=Ui.icon(this,"mic","Записать голосовое сообщение",v->recordVoice(),true);composer.addView(micButton,lp(dp(44),dp(48)));sendButton=Ui.icon(this,"send","Отправить сообщение",v->send(),false);LinearLayout.LayoutParams sendSize=lp(dp(48),dp(48));sendSize.leftMargin=dp(4);composer.addView(sendButton,sendSize);root.addView(composer);renderMessages();
  }
- private void updateButtons(){if(authButton!=null)authButton.setEnabled(!busy);if(searchButton!=null)searchButton.setEnabled(!busy);if(sendButton!=null)sendButton.setEnabled(!busy&&!recording);if(micButton!=null){micButton.setEnabled(!busy&&photo==null&&voice==null);micButton.setText(recording?"■":"");micButton.setCompoundDrawablesWithIntrinsicBounds(recording?null:new Ui.Icon(this,"mic",PINE),null,null,null);micButton.setContentDescription(recording?"Остановить запись":"Записать голосовое сообщение");}}
+ private void updateButtons(){if(authButton!=null)authButton.setEnabled(!busy);if(searchButton!=null)searchButton.setEnabled(!busy);if(sendButton!=null)sendButton.setEnabled(!busy&&!recording);if(micButton!=null){micButton.setEnabled(!busy&&photo==null&&voice==null);micButton.setText(recording?"■":"");micButton.setCompoundDrawablesWithIntrinsicBounds(recording?null:new Ui.Icon(this,"mic",Ui.ACCENT),null,null,null);micButton.setContentDescription(recording?"Остановить запись":"Записать голосовое сообщение");}}
  private void clear(){NotificationService.stop(this);calls.disconnect();audio.stopRecording(false);stopAudio();voice=null;retryVoice=null;voiceDrafts.clear();session=null;selected=null;photo=null;retryPhoto=null;photoDrafts.clear();photoCache.evictAll();messages.clear();chats=new JSONArray();users=new JSONArray();drafts.clear();searchText="";cursor=0;screen();}
  private void error(Exception e,boolean auth){
   if(!auth&&e instanceof ApiError&&((ApiError)e).code==401){getSharedPreferences("account-v2",Context.MODE_PRIVATE).edit().clear().commit();clear();}
@@ -195,7 +201,7 @@ public class MainActivity extends Activity {
  }
  private void logout(){
   if(busy||session==null)return;final JSONObject target=session;
-  LinearLayout form=column();form.setPadding(dp(24),dp(12),dp(24),dp(12));form.addView(text("Пароль от @"+target.optJSONObject("user").optString("username"),16,INK));gap(form,12);
+  LinearLayout form=column();form.setPadding(dp(24),dp(12),dp(24),dp(12));form.addView(text("Пароль от @"+target.optJSONObject("user").optString("username"),16,Ui.INK));gap(form,12);
   EditText confirmation=input("Пароль",128,true);form.addView(confirmation);
   TextView feedback=text("",14,Color.rgb(178,72,57));form.addView(feedback);
   AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Подтвердите выход").setView(form).setPositiveButton("Выйти",null).setNegativeButton("Отмена",null).create();
@@ -217,30 +223,32 @@ public class MainActivity extends Activity {
   if(busy||session==null)return;final JSONObject target=session;busy=true;updateButtons();network.execute(()->{try{JSONObject r=request(target,json("action","open","username",profile.optString("username")),"");JSONObject c=json("id",r.getString("conversation"),"peerId",profile.getString("id"),"username",profile.getString("username"));
    ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;select(c);refresh();});}catch(Exception e){ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;updateButtons();error(e,false);});}});
  }
- private void select(JSONObject c){if(recording)return;stopAudio();if(selected!=null)voiceDrafts.put(selected.optString("id"),voice);voice=c==null?null:voiceDrafts.get(c.optString("id"));retryVoice=null;if(selected!=null&&draft!=null)drafts.put(selected.optString("id"),draft.getText().toString());if(selected==null&&query!=null)searchText=query.getText().toString();if(selected!=null)photoDrafts.put(selected.optString("id"),photo);selected=c;photo=c==null?null:photoDrafts.get(c.optString("id"));retryPhoto=null;messages.clear();cursor=0;peerRead=0;retryText="";retryId="";retryChat="";screen();}
+ private void select(JSONObject c){if(recording)return;stopAudio();if(selected!=null)voiceDrafts.put(selected.optString("id"),voice);voice=c==null?null:voiceDrafts.get(c.optString("id"));retryVoice=null;if(selected!=null&&draft!=null)drafts.put(selected.optString("id"),draft.getText().toString());if(selected==null&&query!=null)searchText=query.getText().toString();if(selected!=null)photoDrafts.put(selected.optString("id"),photo);selected=c;photo=c==null?null:photoDrafts.get(c.optString("id"));retryPhoto=null;messages.clear();cursor=0;changesCursor=0;rebuildMessages=false;peerRead=0;retryText="";retryId="";retryChat="";screen();}
  private void refresh(){
   if(!active||session==null||polling)return;polling=true;final JSONObject target=session,chat=selected;final long after=cursor;
   network.execute(()->{try{
-   JSONObject inbox=request(target,null,"");JSONObject feed=chat==null?null:request(target,null,"?view=messages&conversation="+chat.optString("id")+"&after="+after);
-   ui.post(()->{polling=false;if(isDestroyed()||session!=target)return;chats=inbox.optJSONArray("chats");renderInbox();consumeNotification();
-    if(chat!=null&&selected==chat&&feed!=null){JSONArray incoming=feed.optJSONArray("messages");boolean changed=peerRead!=feed.optLong("peerRead");peerRead=feed.optLong("peerRead");for(int i=0;i<incoming.length();i++){JSONObject m=incoming.optJSONObject(i);if(m.optLong("seq")>cursor){messages.add(m);cursor=m.optLong("seq");changed=true;}}if(changed)renderMessages();}
-    status.setText("Соединение установлено");status.setTextColor(MUTED);
+   JSONObject inbox=request(target,null,"");JSONObject feed=chat==null?null:request(target,null,"?view=messages&conversation="+chat.optString("id")+"&after="+after+"&changesAfter="+changesCursor);
+   ui.post(()->{polling=false;if(isDestroyed()||session!=target)return;syncProfile(inbox.optJSONObject("user"));chats=inbox.optJSONArray("chats");syncPeer();renderInbox();consumeNotification();
+    if(chat!=null&&selected==chat&&feed!=null){JSONArray incoming=feed.optJSONArray("messages");boolean changed=peerRead!=feed.optLong("peerRead");peerRead=feed.optLong("peerRead");for(int i=0;i<incoming.length();i++){JSONObject m=incoming.optJSONObject(i);if(m.optLong("seq")>cursor){messages.add(m);cursor=m.optLong("seq");changed=true;}}JSONArray updates=feed.optJSONArray("updates");if(updates!=null)for(int j=0;j<updates.length();j++){JSONObject update=updates.optJSONObject(j);for(int k=0;k<messages.size();k++){JSONObject old=messages.get(k);if(old.optLong("seq")==update.optLong("seq")&&(old.optLong("editedAt")!=update.optLong("editedAt")||old.optLong("deletedAt")!=update.optLong("deletedAt"))){messages.set(k,update);changed=true;rebuildMessages=true;break;}}}changesCursor=Math.max(changesCursor,feed.optLong("changesCursor"));if(rebuildMessages)stopAudio();if(changed)renderMessages();}
+    status.setText("Соединение установлено");status.setTextColor(Ui.MUTED);
    });
   }catch(Exception e){ui.post(()->{polling=false;if(!isDestroyed()&&session==target)error(e,false);});}});
  }
  private void renderMessages(){
-  if(messageList==null||session==null)return;int old=messageScroll.getScrollY();boolean bottom=messageList.getHeight()-old-messageScroll.getHeight()<dp(90);boolean animate=!receipts.isEmpty();if(receipts.isEmpty()){messageList.removeAllViews();messageDay="";}
-  if(messages.isEmpty()){TextView empty=text("Скажите «привет»\nИ начнётся ваш разговор",20,MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(28),0,0);messageList.addView(empty);}
+  if(messageList==null||session==null)return;int old=messageScroll.getScrollY();boolean bottom=messageList.getHeight()-old-messageScroll.getHeight()<dp(90);boolean animate=!receipts.isEmpty();if(rebuildMessages){receipts.clear();rebuildMessages=false;animate=false;}if(receipts.isEmpty()){messageList.removeAllViews();messageDay="";}
+  if(messages.isEmpty()){TextView empty=text("Скажите «привет»\nИ начнётся ваш разговор",20,Ui.MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(28),0,0);messageList.addView(empty);}
   for(JSONObject m:messages){
-   boolean own=m.optString("sender").equals(session.optJSONObject("user").optString("id"));int ink=own?Color.WHITE:INK;
+   boolean own=m.optString("sender").equals(session.optJSONObject("user").optString("id"));int ink=own?Color.WHITE:Ui.INK;
    String time=new SimpleDateFormat("HH:mm",Locale.getDefault()).format(new Date(m.optLong("at")));
-   String stamp=time+(own?(peerRead>=m.optLong("seq")?" · Прочитано":" · Отправлено"):"");
+   String stamp=time+(m.optLong("editedAt")>0&&m.optLong("deletedAt")==0?" · изменено":"")+(own?(peerRead>=m.optLong("seq")?" · Прочитано":" · Отправлено"):"");
    if(receipts.containsKey(m.optLong("seq"))){receipts.get(m.optLong("seq")).setText(stamp);continue;}
-   String day=new SimpleDateFormat("d MMMM",Locale.getDefault()).format(new Date(m.optLong("at")));if(!day.equals(messageDay)){messageDay=day;TextView divider=text(day,11,MUTED);divider.setGravity(Gravity.CENTER);divider.setPadding(0,dp(10),0,dp(16));messageList.addView(divider);}
-   LinearLayout row=new LinearLayout(this);row.setGravity(own?Gravity.RIGHT:Gravity.LEFT);LinearLayout bubble=column();bubble.setPadding(dp(14),dp(10),dp(14),dp(6));bubble.setBackground(own?Ui.gradient(this,PINE,0xff258263,20):bg(Color.WHITE,20));
-   if(!m.isNull("photo")&&!m.optString("photo").isEmpty())addPhoto(bubble,m.optString("photo"),selected.optString("id"));
-   if(!m.isNull("voice")&&!m.optString("voice").isEmpty())addVoice(bubble,m.optString("voice"),selected.optString("id"),m.optInt("duration"));
-   String body=m.optString("text");TextView content=text(body,16,ink);content.setTextIsSelectable(true);content.setMaxWidth(Math.max(dp(160),getResources().getDisplayMetrics().widthPixels-dp(110)));if(!body.isEmpty())bubble.addView(content);
+   String day=new SimpleDateFormat("d MMMM",Locale.getDefault()).format(new Date(m.optLong("at")));if(!day.equals(messageDay)){messageDay=day;TextView divider=text(day,11,Ui.MUTED);divider.setGravity(Gravity.CENTER);divider.setPadding(0,dp(10),0,dp(16));messageList.addView(divider);}
+   LinearLayout row=new LinearLayout(this);boolean call=m.optString("kind").equals("call"),deleted=m.optLong("deletedAt")>0;if(call)ink=Ui.INK;row.setGravity(call?Gravity.CENTER:own?Gravity.RIGHT:Gravity.LEFT);LinearLayout bubble=column();bubble.setPadding(dp(14),dp(10),dp(14),dp(6));bubble.setBackground(call?bg(Ui.SOFT,20):own?Ui.gradient(this,Ui.ACCENT,Ui.LIGHT,20):bg(Color.WHITE,20));
+   if(!deleted&&!m.isNull("photo")&&!m.optString("photo").isEmpty())addPhoto(bubble,m.optString("photo"),selected.optString("id"));
+   if(!deleted&&!m.isNull("voice")&&!m.optString("voice").isEmpty())addVoice(bubble,m.optString("voice"),selected.optString("id"),m.optInt("duration"));
+   String body=call?callSummary(m,own):deleted?"Сообщение удалено":m.optString("text");TextView content=text(body,16,ink);content.setTextIsSelectable(true);content.setMaxWidth(Math.max(dp(160),getResources().getDisplayMetrics().widthPixels-dp(110)));if(!body.isEmpty())bubble.addView(content);
+   if(call){Button callback=quiet(m.optString("callStatus").equals("missed")&&!own?"Перезвонить":"Позвонить",v->{if(!busy&&!recording&&selected!=null)calls.dial(selected.optString("username"));});bubble.addView(callback);}
+   else if(own&&!deleted){Button more=Ui.button(this,"•••",v->messageActions(m,v),true);more.setTextSize(12);more.setMinHeight(dp(28));more.setMinimumHeight(dp(28));more.setPadding(dp(8),0,dp(8),0);more.setBackgroundColor(Color.TRANSPARENT);more.setTextColor(ink);more.setContentDescription("Изменить или удалить сообщение");LinearLayout.LayoutParams small=lp(dp(44),dp(28));small.gravity=Gravity.RIGHT;bubble.addView(more,small);}
    TextView receipt=text(stamp,10,ink);receipt.setAlpha(.7f);receipt.setGravity(Gravity.RIGHT);receipt.setPadding(0,dp(7),0,dp(3));bubble.addView(receipt);receipts.put(m.optLong("seq"),receipt);
    row.addView(bubble);LinearLayout.LayoutParams p=lp(-1,-2);p.setMargins(0,dp(6),0,dp(6));messageList.addView(row,p);if(animate&&bottom)Ui.enter(row,8);
   }messageScroll.post(()->{if(bottom)messageScroll.fullScroll(View.FOCUS_DOWN);else messageScroll.scrollTo(0,old);});
@@ -294,7 +302,7 @@ public class MainActivity extends Activity {
   if(voice!=null){final byte[] clip=voice;LinearLayout row=new LinearLayout(this);Button preview=button("▶ "+VoiceAudio.time(VoiceAudio.seconds(clip))+" · Прослушать",v->{});preview.setOnClickListener(v->{if(busy)return;playVoice(clip,preview);});row.addView(preview,new LinearLayout.LayoutParams(0,-2,1));row.addView(button("×",v->{if(busy)return;stopAudio();voice=null;showAttachment();}),lp(dp(48),dp(48)));attachment.addView(row);return;}
   if(photo==null)return;
   LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);ImageView preview=new ImageView(this);preview.setImageBitmap(BitmapFactory.decodeByteArray(photo,0,photo.length));preview.setScaleType(ImageView.ScaleType.FIT_CENTER);row.addView(preview,lp(dp(80),dp(70)));
-  row.addView(text("Фото готово к отправке",12,MUTED),new LinearLayout.LayoutParams(0,-2,1));row.addView(button("×",v->{if(busy)return;photo=null;showAttachment();}),lp(dp(48),dp(48)));attachment.addView(row);
+  row.addView(text("Фото готово к отправке",12,Ui.MUTED),new LinearLayout.LayoutParams(0,-2,1));row.addView(button("×",v->{if(busy)return;photo=null;showAttachment();}),lp(dp(48),dp(48)));attachment.addView(row);
  }
  private void attach(){
   if(calls.busy())return;
@@ -310,7 +318,7 @@ public class MainActivity extends Activity {
   }).show();
  }
  @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
-  super.onActivityResult(requestCode,resultCode,data);if(requestCode!=GALLERY&&requestCode!=CAMERA)return;
+  super.onActivityResult(requestCode,resultCode,data);if(requestCode==46){if(resultCode==RESULT_OK&&data!=null&&data.getData()!=null)pickAvatar(data.getData());return;}if(requestCode!=GALLERY&&requestCode!=CAMERA)return;
   if(resultCode!=RESULT_OK)return;
   deferredPhoto=requestCode==CAMERA?Uri.fromFile(new File(getCacheDir(),"capture.jpg")):(data==null?null:data.getData());consumePhoto();
  }
@@ -357,5 +365,40 @@ public class MainActivity extends Activity {
   KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);if(!store.containsAlias(KEY_ALIAS)){KeyGenerator g=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");g.init(new KeyGenParameterSpec.Builder(KEY_ALIAS,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());g.generateKey();}return (SecretKey)store.getKey(KEY_ALIAS,null);
  }
  private void saveSession(JSONObject value)throws Exception{Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());byte[] data=c.doFinal(value.toString().getBytes(StandardCharsets.UTF_8));if(!getSharedPreferences("account-v2",Context.MODE_PRIVATE).edit().putString("iv",Base64.encodeToString(c.getIV(),Base64.NO_WRAP)).putString("data",Base64.encodeToString(data,Base64.NO_WRAP)).commit())throw new Exception("Не удалось сохранить вход.");}
- static JSONObject loadSession(Context context)throws Exception{SharedPreferences p=context.getSharedPreferences("account-v2",Context.MODE_PRIVATE);String value=p.getString("data",null);if(value==null)return null;Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(p.getString("iv",""),Base64.NO_WRAP)));JSONObject result=new JSONObject(new String(c.doFinal(Base64.decode(value,Base64.NO_WRAP)),StandardCharsets.UTF_8));return result.optLong("expiresAt")>System.currentTimeMillis()?result:null;}
+ static JSONObject loadSession(Context context)throws Exception{SharedPreferences p=context.getSharedPreferences("account-v2",Context.MODE_PRIVATE);String value=p.getString("data",null);if(value==null)return null;Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(p.getString("iv",""),Base64.NO_WRAP)));JSONObject result=new JSONObject(new String(c.doFinal(Base64.decode(value,Base64.NO_WRAP)),StandardCharsets.UTF_8));return result.optLong("expiresAt")>System.currentTimeMillis()?result:null;} 
+ private View profileAvatar(JSONObject profile,int size){
+  android.widget.FrameLayout frame=new android.widget.FrameLayout(this);frame.setLayoutParams(lp(dp(size),dp(size)));frame.setBackground(bg(Ui.SOFT,(int)(size*.36f)));frame.setClipToOutline(true);frame.addView(Ui.avatar(this,profile.optString("username"),size));
+  String avatar=profile.isNull("avatar")?"":profile.optString("avatar"),id=profile.optString("peerId",profile.optString("id"));if(avatar.isEmpty()||session==null)return frame;
+  java.util.function.Consumer<Bitmap> apply=bitmap->{frame.removeAllViews();ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setImageBitmap(bitmap);frame.addView(image,new android.widget.FrameLayout.LayoutParams(-1,-1));};Bitmap cached=avatars.get(avatar);if(cached!=null){apply.accept(cached);return frame;}
+  final JSONObject target=session;images.execute(()->{try{JSONObject response=request(target,null,"?view=avatar&user="+id);if(!response.optString("avatar",avatar).equals(avatar))return;byte[] data=Base64.decode(response.getString("data"),Base64.DEFAULT);Bitmap image=BitmapFactory.decodeByteArray(data,0,data.length);if(image!=null)ui.post(()->{if(!isDestroyed()&&session==target){avatars.put(avatar,image);apply.accept(image);}});}catch(Exception ignored){}});return frame;
+ }
+ private void syncProfile(JSONObject profile){if(profile==null||session==null)return;JSONObject old=session.optJSONObject("user");if(old.toString().equals(profile.toString()))return;try{session.put("user",profile);saveSession(session);}catch(Exception ignored){}}
+ private void syncPeer(){if(selected==null||chats==null)return;for(int i=0;i<chats.length();i++){JSONObject c=chats.optJSONObject(i);if(c.optString("id").equals(selected.optString("id"))){boolean changed=!c.optString("username").equals(selected.optString("username"))||!c.optString("avatar").equals(selected.optString("avatar"));try{selected.put("username",c.optString("username"));selected.put("avatar",c.opt("avatar"));}catch(Exception ignored){}if(changed){if(peerHeader!=null)peerHeader.setText("@"+selected.optString("username"));if(peerAvatar!=null){peerAvatar.removeAllViews();peerAvatar.addView(profileAvatar(selected,40));}}break;}}}
+ private void showSettings(){
+  if(busy||recording||session==null||calls.busy())return;
+  LinearLayout wrap=column();wrap.setPadding(dp(20),dp(12),dp(20),dp(12));LinearLayout tabs=new LinearLayout(this);LinearLayout content=column();Button account=quiet("Account",v->settingsAccount(content));Button style=quiet("Стиль",v->settingsStyle(content));tabs.addView(account,new LinearLayout.LayoutParams(0,-2,1));tabs.addView(style,new LinearLayout.LayoutParams(0,-2,1));wrap.addView(tabs);gap(wrap,18);ScrollView scroll=new ScrollView(this);scroll.addView(content);wrap.addView(scroll,lp(-1,dp(370)));settingsDialog=new AlertDialog.Builder(this).setTitle("Настройки").setView(wrap).setNegativeButton("Закрыть",null).create();if(settingsTab==1)settingsStyle(content);else settingsAccount(content);settingsDialog.show();Ui.dialog(settingsDialog,wrap);
+ }
+ private void settingsAccount(LinearLayout panel){settingsTab=0;
+  panel.removeAllViews();panel.addView(profileAvatar(session.optJSONObject("user"),88));gap(panel,14);
+  panel.addView(button("Выбрать аватарку",v->{if(busy)return;Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(pick,46);}));gap(panel,8);panel.addView(quiet("Убрать аватарку",v->updateProfile(json("action","removeAvatar"))));gap(panel,18);
+  panel.addView(heading("Юзернейм",14));EditText name=input("username",24,false);name.setText(session.optJSONObject("user").optString("username"));panel.addView(name);gap(panel,6);panel.addView(text("3–24 символа: a–z, цифры и _. Переписки сохранятся.",12,Ui.MUTED));gap(panel,12);panel.addView(button("Сохранить юзернейм",v->updateProfile(json("action","rename","username",name.getText().toString()))));
+ }
+ private void settingsStyle(LinearLayout panel){settingsTab=1;panel.removeAllViews();panel.addView(heading("Цвет мессенджера",22));gap(panel,8);panel.addView(text("Сохраняется на этом устройстве.",12,Ui.MUTED));gap(panel,14);for(int i=0;i<Ui.THEME_NAMES.length;i++){final int index=i;Button color=button(Ui.THEME_NAMES[i],v->{if(busy)return;Ui.theme(this,index,true);settingsDialog.dismiss();screen();showSettings();});color.setBackground(bg(Ui.THEME_COLORS[i],16));panel.addView(color,lp(-1,dp(44)));gap(panel,8);}}
+ private void updateProfile(JSONObject body){
+  if(busy||session==null)return;final JSONObject target=session;busy=true;updateButtons();network.execute(()->{try{JSONObject result=request(target,body,"");ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;syncProfile(result.optJSONObject("user"));if(settingsDialog!=null)settingsDialog.dismiss();screen();showSettings();Toast.makeText(this,"Профиль сохранён",Toast.LENGTH_SHORT).show();});}catch(Exception e){ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;updateButtons();Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();error(e,false);});}});
+ }
+ private void pickAvatar(Uri uri){
+  final JSONObject target=session;images.execute(()->{try{byte[] source;try(InputStream input=getContentResolver().openInputStream(uri);ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] block=new byte[8192];int count;while((count=input.read(block))!=-1){if(out.size()+count>40*1024*1024)throw new Exception("Выберите фото до 40 МБ.");out.write(block,0,count);}source=out.toByteArray();}
+   source=preparePhoto(uri);Bitmap image=BitmapFactory.decodeByteArray(source,0,source.length);if(image==null)throw new Exception("Не удалось открыть фото.");float scale=Math.min(1,512f/Math.max(image.getWidth(),image.getHeight()));Bitmap small=Bitmap.createScaledBitmap(image,Math.max(1,Math.round(image.getWidth()*scale)),Math.max(1,Math.round(image.getHeight()*scale)),true);ByteArrayOutputStream out=new ByteArrayOutputStream();for(int quality:new int[]{85,65,45,25}){out.reset();small.compress(Bitmap.CompressFormat.JPEG,quality,out);if(out.size()<=204800)break;}byte[] data=out.toByteArray();if(small!=image)image.recycle();small.recycle();if(data.length>204800)throw new Exception("Выберите другое фото.");ui.post(()->{if(!isDestroyed()&&session==target)updateProfile(json("action","setAvatar","data",Base64.encodeToString(data,Base64.NO_WRAP)));});
+  }catch(Exception e){ui.post(()->Toast.makeText(this,"Не удалось открыть аватарку: "+e.getMessage(),Toast.LENGTH_LONG).show());}});
+ }
+ private String callSummary(JSONObject message,boolean own){return message.optString("callStatus").equals("answered")?"Разговор · "+VoiceAudio.time(message.optInt("callDuration")):own?"Исходящий вызов · Без ответа":"Вам звонили · Пропущенный вызов";}
+ private void messageActions(JSONObject message,View anchor){
+  if(busy||recording)return;android.widget.PopupMenu menu=new android.widget.PopupMenu(this,anchor);menu.getMenu().add("Изменить");menu.getMenu().add("Удалить у всех");menu.setOnMenuItemClickListener(item->{if(item.getTitle().equals("Изменить")){EditText edit=input("Сообщение",4000,false);edit.setSingleLine(false);edit.setMinLines(3);edit.setText(message.optString("text"));AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Изменить сообщение").setView(edit).setPositiveButton("Сохранить",null).setNegativeButton("Отмена",null).create();dialog.show();dialog.getButton(-1).setOnClickListener(v->mutateMessage(message,edit.getText().toString(),dialog));}else new AlertDialog.Builder(this).setTitle("Удалить сообщение?").setMessage("Оно будет удалено у вас и у собеседника.").setPositiveButton("Удалить",(d,w)->mutateMessage(message,null,null)).setNegativeButton("Отмена",null).show();return true;});menu.show();
+ }
+ private void mutateMessage(JSONObject message,String text,AlertDialog dialog){
+  if(busy||recording||session==null||selected==null)return;final JSONObject target=session,chat=selected;busy=true;updateButtons();JSONObject body=json("action",text==null?"deleteMessage":"editMessage","conversation",chat.optString("id"),"seq",message.optLong("seq"));if(text!=null)try{body.put("text",text);}catch(Exception ignored){}
+  network.execute(()->{try{request(target,body,"");ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;updateButtons();if(dialog!=null)dialog.dismiss();refresh();});}catch(Exception e){ui.post(()->{if(isDestroyed()||session!=target)return;busy=false;updateButtons();Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();error(e,false);});}});
+ }
+
 }

@@ -10,7 +10,13 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.*;
 
 final class Ui {
- static final int ACCENT=Color.rgb(23,107,83),INK=Color.rgb(24,60,50),MUTED=Color.rgb(108,130,120),PAPER=Color.rgb(240,246,242),SOFT=Color.rgb(232,243,237);
+ static final int INK=Color.rgb(41,59,53),MUTED=Color.rgb(108,125,116);
+ static int ACCENT=0xff176b53,PAPER=0xfff5f8f6,SOFT=0xffe8f3ed,LIGHT=0xff258263;
+ static final String[] THEME_NAMES={"Зелёный","Красный","Синий","Фиолетовый","Розовый","Оранжевый","Бирюзовый","Индиго","Малиновый","Оливковый","Графит","Коричневый"};
+ static final int[] THEME_COLORS={0xff176b53,0xffb83e42,0xff2766bc,0xff7b49b0,0xffb33d7a,0xffad591d,0xff167b82,0xff4f51b7,0xffa72e55,0xff687528,0xff465363,0xff84604a};
+ static int mix(int a,int b,float t){return Color.rgb((int)(Color.red(a)*(1-t)+Color.red(b)*t),(int)(Color.green(a)*(1-t)+Color.green(b)*t),(int)(Color.blue(a)*(1-t)+Color.blue(b)*t));}
+ static void theme(Context c,int index,boolean save){index=Math.max(0,Math.min(THEME_COLORS.length-1,index));ACCENT=THEME_COLORS[index];SOFT=mix(ACCENT,Color.WHITE,.91f);PAPER=mix(ACCENT,Color.WHITE,.965f);LIGHT=mix(ACCENT,Color.WHITE,.12f);if(save)c.getSharedPreferences("style",0).edit().putInt("accent",index).apply();}
+ static void loadTheme(Context c){theme(c,c.getSharedPreferences("style",0).getInt("accent",0),false);}
  static int dp(Context c,float n){return (int)(n*c.getResources().getDisplayMetrics().density+.5f);}
  static boolean motion(){return ValueAnimator.areAnimatorsEnabled();}
  static GradientDrawable round(Context c,int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(c,radius));return d;}

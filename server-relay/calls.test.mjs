@@ -33,6 +33,22 @@ test('authentication and browser origins are checked before upgrade', async t =>
     await new Promise(resolve => { const ws = new WebSocket(f.url, { headers }); ws.on('error', resolve); ws.on('open', () => { assert.fail('Unauthorized upgrade'); }); });
   }
 });
+test('call summaries use authenticated participants and timestamps and survive repeated hangup', async t => {
+ const events=[],f=await fixture(t,{recordCall:async e=>events.push(e)}),a=await f.connect('a'),b=await f.connect('b'),c=await f.connect('c');
+ a.control({type:'call',username:'bobby',from:'3',duration:999});const ringing=await a.next();await b.next();
+ c.control({type:'hangup',id:ringing.id});b.control({type:'accept',id:ringing.id,answeredAt:0});await a.next();await b.next();
+ b.control({type:'hangup',id:ringing.id,endedAt:0,duration:999});await a.next();await b.next();
+ a.control({type:'hangup',id:ringing.id});await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(events.length,1);assert.equal(events[0].from,'1');assert.equal(events[0].to,'2');assert.equal(events[0].id,ringing.id);
+ assert.ok(events[0].createdAt<=events[0].answeredAt&&events[0].answeredAt<=events[0].endedAt);assert.ok(events[0].answeredAt>Date.now()-10000);
+ assert.equal(events[0].duration,undefined);
+});
+test('missed online and offline calls leave one callback record each',async t=>{
+ const events=[],f=await fixture(t,{recordCall:async e=>events.push(e)}),a=await f.connect('a'),b=await f.connect('b');
+ a.control({type:'call',username:'bobby'});const ringing=await a.next();await b.next();a.control({type:'cancel'});await a.next();await b.next();
+ a.control({type:'call',username:'carol'});assert.equal((await a.next()).reason,'offline');await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(events.length,2);assert.equal(events[0].id,ringing.id);assert.ok(events.every(e=>e.answeredAt===null&&e.endedAt>=e.createdAt));
+});
 test('accepted call forwards exact PCM in both directions, isolated from third user', async t => {
   const f = await fixture(t), a = await f.connect('a'), b = await f.connect('b'), c = await f.connect('c');
   a.control({ type: 'call', username: 'bobby' }); const ringing = await a.next(), incoming = await b.next();

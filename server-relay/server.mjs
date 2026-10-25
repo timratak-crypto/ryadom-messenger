@@ -54,7 +54,7 @@ async function readResponse(response, limit = RESPONSE_LIMIT) {
   }
 }
 
-export function createRelay({ fetchImpl = fetch } = {}) {
+export function createRelay({ fetchImpl = fetch, callLogKey = process.env.RYADOM_CALL_LOG_KEY } = {}) {
   let inFlight = 0;
   const server = http.createServer({ maxHeaderSize: 8192 }, async (req, res) => {
     try {
@@ -65,13 +65,13 @@ export function createRelay({ fetchImpl = fetch } = {}) {
       }
       const url = new URL(req.url, 'http://localhost');
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-        return reply(res, 200, { ok: true, service: 'ryadom-relay', version: '2.5.2', calls: 1, message: 'Сервер доступен. Вернитесь в приложение «Рядом».' });
+        return reply(res, 200, { ok: true, service: 'ryadom-relay', version: '2.7.0', calls: 1, callHistory: /^[a-f0-9]{64}$/.test(callLogKey || ''), message: 'Сервер доступен. Вернитесь в приложение «Рядом».' });
       }
       if (!['/api/chat', '/api/v2', '/api/admin'].includes(url.pathname)) return reply(res, 404, { error: 'Страница не найдена.' });
       if (!['GET', 'POST'].includes(req.method)) return reply(res, 405, { error: 'Метод не поддерживается.' });
       const v2 = url.pathname === '/api/v2';
       const admin = url.pathname === '/api/admin';
-      const queryKeys = admin ? ['q', 'after'] : v2 ? ['view', 'q', 'conversation', 'after', 'photo', 'voice'] : ['room', 'device', 'after'];
+      const queryKeys = admin ? ['q', 'after'] : v2 ? ['view', 'q', 'conversation', 'after', 'photo', 'voice', 'changesAfter', 'user'] : ['room', 'device', 'after'];
       if ([...url.searchParams.keys()].some(key => !queryKeys.includes(key))) {
         return reply(res, 400, { error: 'Неверные параметры запроса.' });
       }
@@ -88,8 +88,8 @@ export function createRelay({ fetchImpl = fetch } = {}) {
         let value;
         try { value = JSON.parse(body.toString('utf8')); } catch { return reply(res, 400, { error: 'Неверный формат запроса.' }); }
         if (v2 && value?.action === 'sendPhoto' && body.length > 1_420_000) return reply(res, 413, { error: 'Фотография слишком большая.' });
-        if (!(v2 && ['sendPhoto', 'sendVoice'].includes(value?.action)) && body.length > 16_384) return reply(res, 413, { error: 'Слишком большой запрос.' });
-        const actions = admin ? ['delete'] : v2 ? ['register', 'login', 'logout', 'open', 'send', 'sendPhoto', 'sendVoice'] : ['create', 'join', 'send'];
+        if (!(v2 && ['sendPhoto', 'sendVoice', 'setAvatar'].includes(value?.action)) && body.length > 16_384) return reply(res, 413, { error: 'Слишком большой запрос.' });
+        const actions = admin ? ['delete'] : v2 ? ['register', 'login', 'logout', 'open', 'send', 'sendPhoto', 'sendVoice', 'rename', 'setAvatar', 'removeAvatar', 'editMessage', 'deleteMessage'] : ['create', 'join', 'send'];
         if (!value || typeof value !== 'object' || Array.isArray(value) || !actions.includes(value.action)) {
           return reply(res, 400, { error: 'Неизвестное действие.' });
         }
@@ -140,6 +140,22 @@ export function createRelay({ fetchImpl = fetch } = {}) {
   const calls = attachCalls(server, {
     authenticate: async token => (await account(token)).user,
     resolvePeer: async (token, username) => (await account(token, { action: 'open', username })).peer,
+    recordCall: async event => {
+      if (!/^[a-f0-9]{64}$/.test(callLogKey || '')) return;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const response = await fetchImpl(UPSTREAM + '/api/call-events', {
+            method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000),
+            headers: { Authorization: 'Bearer ' + callLogKey, 'Content-Type': 'application/json' }, body: JSON.stringify(event),
+          });
+          await response.body?.cancel();
+          if (response.ok || response.status === 404) return;
+          if (response.status < 500) throw Object.assign(Error('Call report rejected'), { permanent: true });
+        } catch (error) { if (error.permanent || attempt === 2) throw error; }
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+      throw Error('Call report failed');
+    },
   });
   server.closeCalls = calls.close;
   return server;
@@ -149,5 +165,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const server = createRelay();
   const port = Number(process.env.PORT || 10000);
   server.listen(port, '0.0.0.0', () => console.log(`Ryadom gateway listening on port ${port}`));
-  process.on('SIGTERM', () => { server.closeCalls(); server.close(() => process.exit(0)); });
+  process.on('SIGTERM', async () => { await server.closeCalls(); server.close(() => process.exit(0)); });
 }

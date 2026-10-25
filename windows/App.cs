@@ -25,14 +25,14 @@ using Windows.Graphics.Imaging;
 using BitmapDecoder=System.Windows.Media.Imaging.BitmapDecoder;
 using BitmapFrame=System.Windows.Media.Imaging.BitmapFrame;
 using Windows.Media.MediaProperties;
-[assembly:System.Reflection.AssemblyVersion("2.6.1.0")]
+[assembly:System.Reflection.AssemblyVersion("2.7.0.0")]
 namespace Ryadom {
- public class Profile { public string id; public string username; }
+ public class Profile { public string id; public string username; public string avatar; }
  public class Session { public string token; public long expiresAt; public Profile user; }
- public class Conversation { public string id; public string peerId; public string username; public string lastText; public long at; public int unread; }
- public class Message { public long seq; public string sender; public string clientId; public string text; public long at; public string photo; public int? width; public int? height; public string voice; public int? duration; }
- public class PhotoResponse { public string data; }
- public class Result { public string error; public string conversation; public Profile peer; public Profile user; public List<Profile> users; public List<Conversation> chats; public List<Message> messages; public long peerRead; public bool hasMore; }
+ public class Conversation { public string avatar; public string id; public string peerId; public string username; public string lastText; public long at; public int unread; }
+ public class Message { public long editedAt,deletedAt; public string kind,callStatus; public int callDuration; public long seq; public string sender; public string clientId; public string text; public long at; public string photo; public int? width; public int? height; public string voice; public int? duration; }
+ public class PhotoResponse { public string data; public string avatar; }
+ public class Result { public long changesCursor; public List<Message> updates; public string error; public string conversation; public Profile peer; public Profile user; public List<Profile> users; public List<Conversation> chats; public List<Message> messages; public long peerRead; public bool hasMore; }
  public class ApiError:Exception { public int Code; public ApiError(int code,string message):base(message){Code=code;} }
  public static class Api {
   public const string Server="https://ryadom-family-chat.onrender.com";
@@ -73,7 +73,7 @@ namespace Ryadom {
   protected override void OnStartup(StartupEventArgs e) {
    base.OnStartup(e);
    using(var stream=typeof(App).Assembly.GetManifestResourceStream("Ryadom.MainWindow.xaml"))w=(Window)XamlReader.Load(stream);
-   MainWindow=w;
+   MainWindow=w;LoadStyle();Get<Button>("Settings").Click+=(a,b)=>ShowSettings();
    try{if(File.Exists(FilePath)){var s=Json.Deserialize<Session>(Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(FilePath),null,DataProtectionScope.CurrentUser)));if(s.user!=null&&s.expiresAt>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())session=s;}}catch{}
    Get<Button>("Auth").Click+=async(a,b)=>await Authenticate();
    Get<Button>("AuthMode").Click+=(a,b)=>{if(busy)return;register=!register;UpdateAuth();};
@@ -102,6 +102,7 @@ namespace Ryadom {
    EnsureCalls();bool signed=session!=null;
    Get<Grid>("Setup").Visibility=signed?Visibility.Collapsed:Visibility.Visible;
    Get<Grid>("Main").Visibility=signed?Visibility.Visible:Visibility.Collapsed;
+   Get<Button>("Settings").Visibility=signed?Visibility.Visible:Visibility.Collapsed;
    Get<Button>("Logout").Visibility=signed?Visibility.Visible:Visibility.Collapsed;
    Get<TextBlock>("Me").Text=signed?"@"+session.user.username:"Личные сообщения";
    Get<Grid>("Chat").Visibility=signed&&selected!=null?Visibility.Visible:Visibility.Collapsed;
@@ -114,7 +115,7 @@ namespace Ryadom {
    byte[] data=ProtectedData.Protect(Encoding.UTF8.GetBytes(Json.Serialize(s)),null,DataProtectionScope.CurrentUser);
    File.WriteAllBytes(FilePath+".tmp",data);if(File.Exists(FilePath))File.Replace(FilePath+".tmp",FilePath,null);else File.Move(FilePath+".tmp",FilePath);
   }
-  void Clear(){displayedInbox.Clear();inboxSignature="";notificationCursor.Clear();notificationAction=null;StopCalls();callSession.Reset();if(captureVoice!=null)captureVoice.Stop(false);StopAudio();voice=null;retryVoice=null;voiceDrafts.Clear();session=null;selected=null;photo=null;retryPhoto=null;photoDrafts.Clear();receipts.Clear();messages.Clear();drafts.Clear();cursor=0;Get<TextBox>("Draft").Clear();Get<StackPanel>("Chats").Children.Clear();Get<StackPanel>("Results").Children.Clear();Get<TextBox>("Query").Clear();Save(null);Show();}
+  void Clear(){displayedInbox.Clear();inboxSignature="";notificationCursor.Clear();notificationAction=null;StopCalls();callSession.Reset();if(captureVoice!=null)captureVoice.Stop(false);StopAudio();voice=null;retryVoice=null;voiceDrafts.Clear();session=null;selected=null;photo=null;retryPhoto=null;photoDrafts.Clear();receipts.Clear();messages.Clear();drafts.Clear();cursor=0;changesCursor=0;Get<TextBox>("Draft").Clear();Get<StackPanel>("Chats").Children.Clear();Get<StackPanel>("Results").Children.Clear();Get<TextBox>("Query").Clear();Save(null);Show();}
   void Error(Exception ex,bool auth=false){
    var api=ex as ApiError;if(!auth&&api!=null&&api.Code==401)Clear();
    Status(ex is HttpRequestException||ex is TaskCanceledException?"Нет связи с сервером. При первом запуске подождите минуту и повторите.":ex.Message,true);
@@ -149,53 +150,61 @@ namespace Ryadom {
   Button Row(string text,Action click){var b=new Button{Content=new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap},HorizontalContentAlignment=HorizontalAlignment.Left,Background=Brushes.White,Foreground=new SolidColorBrush(Color.FromRgb(33,58,50)),Margin=new Thickness(0,0,0,8),Padding=new Thickness(12)};b.Click+=(a,e)=>click();return b;}
   async Task Search(){
    if(busy||session==null)return;SetBusy(true);var target=session;Get<Button>("Search").IsEnabled=false;
-   try{var r=await Api.Call<Result>(target,null,"?view=search&q="+Uri.EscapeDataString(Get<TextBox>("Query").Text.Trim()));if(session!=target)return;var p=Get<StackPanel>("Results");p.Children.Clear();foreach(var user in r.users){var u=user;p.Children.Add(ContactRow(u.username,"Открыть профиль",0,0,false,()=>{if(busy)return;if(MessageBox.Show("@"+u.username+"\n\nОткрыть личную переписку?","Профиль",MessageBoxButton.YesNo)==MessageBoxResult.Yes)Open(u.username);}));}Status(r.users.Count==0?"Пользователь не найден. Проверьте юзернейм.":"Выберите профиль, чтобы написать.");}
+   try{var r=await Api.Call<Result>(target,null,"?view=search&q="+Uri.EscapeDataString(Get<TextBox>("Query").Text.Trim()));if(session!=target)return;var p=Get<StackPanel>("Results");p.Children.Clear();foreach(var user in r.users){var u=user;p.Children.Add(ContactRow(u.username,"Открыть профиль",0,0,false,()=>{if(busy)return;if(MessageBox.Show("@"+u.username+"\n\nОткрыть личную переписку?","Профиль",MessageBoxButton.YesNo)==MessageBoxResult.Yes)Open(u.username);},u.id,u.avatar));}Status(r.users.Count==0?"Пользователь не найден. Проверьте юзернейм.":"Выберите профиль, чтобы написать.");}
    catch(Exception ex){Error(ex);}finally{SetBusy(false);Get<Button>("Search").IsEnabled=true;}
   }
   async void Open(string username){
    if(busy||session==null)return;SetBusy(true);var target=session;
-   try{var r=await Api.Call<Result>(target,new{action="open",username});if(session!=target)return;Select(new Conversation{id=r.conversation,peerId=r.peer.id,username=r.peer.username});}
+   try{var r=await Api.Call<Result>(target,new{action="open",username});if(session!=target)return;Select(new Conversation{id=r.conversation,peerId=r.peer.id,username=r.peer.username,avatar=r.peer.avatar});}
    catch(Exception ex){Error(ex);}finally{SetBusy(false);}await Refresh();
   }
   void Select(Conversation c){
    if(recording)return;StopAudio();if(selected!=null)voiceDrafts[selected.id]=voice;voiceDrafts.TryGetValue(c.id,out voice);retryVoice=null;
    if(selected!=null)drafts[selected.id]=Get<TextBox>("Draft").Text;
    if(selected!=null)photoDrafts[selected.id]=photo;photoDrafts.TryGetValue(c.id,out photo);retryPhoto=null;receipts.Clear();Get<StackPanel>("Messages").Children.Clear();
-   selected=c;messages.Clear();cursor=0;peerRead=0;retryText="";retryId="";retryChat="";
+   selected=c;messages.Clear();cursor=0;changesCursor=0;rebuildMessages=false;peerRead=0;retryText="";retryId="";retryChat="";
    string draft;Get<TextBox>("Draft").Text=drafts.TryGetValue(c.id,out draft)?draft:"";
-   inboxSignature="";RenderInbox(displayedInbox);Get<Border>("PeerAvatar").Child=Design.Avatar(c.username,44);Get<TextBlock>("Peer").Text="@"+c.username;Get<TextBlock>("Presence").Text="Личная переписка";Show();ShowPhoto();ShowVoice();Render();Fade(Get<Grid>("Chat"));Get<TextBox>("Draft").Focus();
+   inboxSignature="";RenderInbox(displayedInbox);Get<Border>("PeerAvatar").Child=ProfileAvatar(c.username,c.peerId,c.avatar,44);Get<TextBlock>("Peer").Text="@"+c.username;Get<TextBlock>("Presence").Text="Личная переписка";Show();ShowPhoto();ShowVoice();Render();Fade(Get<Grid>("Chat"));Get<TextBox>("Draft").Focus();
   }
   async Task Refresh(){
    if(polling||session==null)return;polling=true;var target=session;var chat=selected;
    try{
-    var inbox=await Api.Call<Result>(target);if(session!=target)return;NotifyMessages(inbox.chats);
+    var inbox=await Api.Call<Result>(target);if(session!=target)return;AcceptProfile(inbox.user);SyncPeer(inbox.chats);NotifyMessages(inbox.chats);
     RenderInbox(inbox.chats);
     if(chat!=null&&w.IsVisible&&w.IsActive&&w.WindowState!=WindowState.Minimized){
-     var f=await Api.Call<Result>(target,null,"?view=messages&conversation="+chat.id+"&after="+cursor);
+     var f=await Api.Call<Result>(target,null,"?view=messages&conversation="+chat.id+"&after="+cursor+"&changesAfter="+changesCursor);
      if(session!=target||selected!=chat)return;
-     bool changed=peerRead!=f.peerRead;peerRead=f.peerRead;
-     foreach(var m in f.messages)if(messages.All(x=>x.seq!=m.seq)){messages.Add(m);cursor=Math.Max(cursor,m.seq);changed=true;}
-     if(changed)Render();
+     if(ApplyFeed(f))Render();
      Status("Соединение установлено · Enter — отправить · Shift+Enter — новая строка");
     }
    }catch(Exception ex){if(session==target)Error(ex);}finally{polling=false;}
   }
+  bool ApplyFeed(Result f){
+     bool changed=peerRead!=f.peerRead;peerRead=f.peerRead;
+     foreach(var m in f.messages)if(messages.All(x=>x.seq!=m.seq)){messages.Add(m);cursor=Math.Max(cursor,m.seq);changed=true;}
+     if(f.updates!=null)foreach(var update in f.updates){int index=messages.FindIndex(x=>x.seq==update.seq);if(index>=0&&(messages[index].editedAt!=update.editedAt||messages[index].deletedAt!=update.deletedAt)){messages[index]=update;rebuildMessages=true;changed=true;}}
+     changesCursor=Math.Max(changesCursor,f.changesCursor);if(rebuildMessages)StopAudio();
+     return changed;
+  }
   void Render(){
-   var p=Get<StackPanel>("Messages");var scroll=Get<ScrollViewer>("Scroll");bool bottom=scroll.ScrollableHeight-scroll.VerticalOffset<90;bool animate=receipts.Count>0;
+   var p=Get<StackPanel>("Messages");var scroll=Get<ScrollViewer>("Scroll");bool bottom=scroll.ScrollableHeight-scroll.VerticalOffset<90;bool animate=receipts.Count>0;double previousOffset=scroll.VerticalOffset;if(rebuildMessages){receipts.Clear();rebuildMessages=false;animate=false;}
    if(receipts.Count==0){p.Children.Clear();messageDay="";}
    if(messages.Count==0){var hello=new StackPanel{Margin=new Thickness(24,70,24,0),HorizontalAlignment=HorizontalAlignment.Center};hello.Children.Add(new TextBlock{Text="Скажите «привет»",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=Design.Ink,TextAlignment=TextAlignment.Center});hello.Children.Add(new TextBlock{Text="И начнётся ваш разговор",FontSize=14,Foreground=Design.Muted,Margin=new Thickness(0,10,0,0),TextAlignment=TextAlignment.Center});p.Children.Add(hello);}
    foreach(var m in messages){
     bool own=m.sender==session.user.id;var ink=own?Brushes.White:Design.Ink;var inner=new StackPanel();var date=DateTimeOffset.FromUnixTimeMilliseconds(m.at).LocalDateTime;
-    string stamp=date.ToString("HH:mm")+(own?(peerRead>=m.seq?"  ·  Прочитано":"  ·  Отправлено"):"");
+    string stamp=date.ToString("HH:mm")+(m.editedAt>0&&m.deletedAt==0?" · изменено":"")+(own?(peerRead>=m.seq?"  ·  Прочитано":"  ·  Отправлено"):"");
     if(receipts.ContainsKey(m.seq)){receipts[m.seq].Text=stamp;continue;}
-    string day=date.ToString("yyyy-MM-dd");if(messageDay!=day){messageDay=day;string label=date.Date==DateTime.Today?"Сегодня":date.Date==DateTime.Today.AddDays(-1)?"Вчера":date.ToString("d MMMM");p.Children.Add(new Border{HorizontalAlignment=HorizontalAlignment.Center,Background=Design.Brush("#E8F1EB"),CornerRadius=new CornerRadius(10),Padding=new Thickness(12,5,12,5),Margin=new Thickness(0,4,0,20),Child=Design.Text(label,11,Design.Muted)});}
-    if(!string.IsNullOrEmpty(m.photo))AddPhoto(inner,m.photo,selected.id);
-    if(!string.IsNullOrEmpty(m.voice))AddVoice(inner,m.voice,selected.id,m.duration??0);
-    if(!string.IsNullOrEmpty(m.text))inner.Children.Add(new TextBox{Text=m.text,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,FontSize=15,Foreground=ink,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),AcceptsReturn=true,IsReadOnlyCaretVisible=true});
+    string day=date.ToString("yyyy-MM-dd");if(messageDay!=day){messageDay=day;string label=date.Date==DateTime.Today?"Сегодня":date.Date==DateTime.Today.AddDays(-1)?"Вчера":date.ToString("d MMMM");p.Children.Add(new Border{HorizontalAlignment=HorizontalAlignment.Center,Background=Palette.Soft,CornerRadius=new CornerRadius(10),Padding=new Thickness(12,5,12,5),Margin=new Thickness(0,4,0,20),Child=Design.Text(label,11,Design.Muted)});}
+    if(m.deletedAt==0&&!string.IsNullOrEmpty(m.photo))AddPhoto(inner,m.photo,selected.id);
+    if(m.deletedAt==0&&!string.IsNullOrEmpty(m.voice))AddVoice(inner,m.voice,selected.id,m.duration??0);
+    if(m.kind=="call"){
+     inner.Children.Add(Design.Text(CallSummary(m,own),15,Design.Ink));var callback=new Button{Content=m.callStatus=="missed"&&!own?"Перезвонить":"Позвонить",Margin=new Thickness(0,10,0,0),Style=(Style)w.Resources["Quiet"]};callback.Click+=(a,e)=>{if(!busy)StartCall();};inner.Children.Add(callback);ink=Design.Ink;
+    }else if(!string.IsNullOrEmpty(m.text))inner.Children.Add(new TextBox{Text=m.deletedAt>0?"Сообщение удалено":m.text,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,FontSize=15,Foreground=ink,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),AcceptsReturn=true,IsReadOnlyCaretVisible=true});
     var receipt=new TextBlock{Text=stamp,FontSize=10,Opacity=.7,Foreground=ink,Margin=new Thickness(0,9,0,0),HorizontalAlignment=HorizontalAlignment.Right};inner.Children.Add(receipt);receipts[m.seq]=receipt;
-    var bubble=new Border{Child=inner,Padding=new Thickness(17,13,17,12),Margin=new Thickness(0,0,0,10),CornerRadius=own?new CornerRadius(18,18,5,18):new CornerRadius(18,18,18,5),MaxWidth=Math.Max(220,((w.ActualWidth>0?w.ActualWidth:w.Width)-420)*.76),HorizontalAlignment=own?HorizontalAlignment.Right:HorizontalAlignment.Left,Background=own?(Brush)Design.Gradient("#176B53","#258263"):Brushes.White,BorderBrush=own?Brushes.Transparent:Design.Brush("#E6EDE8"),BorderThickness=new Thickness(1)};
+    if(own&&m.deletedAt==0&&m.kind!="call"){var item=m;var more=new Button{Content="•••",Padding=new Thickness(8,0,8,0),FontSize=12,HorizontalAlignment=HorizontalAlignment.Right,Background=Brushes.Transparent,Foreground=ink,ToolTip="Изменить или удалить"};more.Click+=(a,e)=>MessageActions(item,more);inner.Children.Add(more);}
+    var bubble=new Border{Child=inner,Padding=new Thickness(17,13,17,12),Margin=new Thickness(0,0,0,10),CornerRadius=own?new CornerRadius(18,18,5,18):new CornerRadius(18,18,18,5),MaxWidth=Math.Max(220,((w.ActualWidth>0?w.ActualWidth:w.Width)-420)*.76),HorizontalAlignment=m.kind=="call"?HorizontalAlignment.Center:own?HorizontalAlignment.Right:HorizontalAlignment.Left,Background=m.kind=="call"?Palette.Soft:own?Palette.Bubble:Brushes.White,BorderBrush=own?Brushes.Transparent:Design.Brush("#E6EDE8"),BorderThickness=new Thickness(1)};
     p.Children.Add(bubble);if(animate&&bottom)Design.Enter(bubble,8);
-   }if(bottom)scroll.ScrollToEnd();
+   }if(bottom)scroll.ScrollToEnd();else scroll.ScrollToVerticalOffset(previousOffset);
   }
   void Fade(UIElement view){Design.Enter(view,16);}
   void ShowPhoto(){ShowVoice();Get<Border>("PhotoPreview").Visibility=photo==null?Visibility.Collapsed:Visibility.Visible;Get<Image>("PendingPhoto").Source=photo==null?null:Decode(photo);}

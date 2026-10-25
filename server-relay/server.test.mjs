@@ -160,3 +160,12 @@ test('does not follow redirects or disclose upstream HTML, exceptions or cookies
     });
   }
 });
+test('profile and message actions pass through, call service endpoint stays private', async()=>{
+ let count=0;await withRelay(async(url,init)=>{count++;assert.equal(init.headers.Authorization,'Bearer '+secret);return Response.json({ok:true});},async base=>{
+  for(const action of ['rename','setAvatar','removeAvatar','editMessage','deleteMessage'])assert.equal((await fetch(base+'/api/v2',json({action,data:action==='setAvatar'?'a'.repeat(200000):''}))).status,200);
+  for(const query of ['view=avatar&user=test','view=messages&conversation=test&after=12&changesAfter=10'])assert.equal((await fetch(base+'/api/v2?'+query,{headers:{Authorization:'Bearer '+secret}})).status,200);
+  assert.equal((await fetch(base+'/api/call-events',json({action:'call'}))).status,404);
+  assert.equal((await fetch(base+'/api/v2',json({action:'recordCall'}))).status,400);
+  assert.equal(count,7);
+ });
+});
