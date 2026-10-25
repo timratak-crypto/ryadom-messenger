@@ -25,12 +25,12 @@ using Windows.Graphics.Imaging;
 using BitmapDecoder=System.Windows.Media.Imaging.BitmapDecoder;
 using BitmapFrame=System.Windows.Media.Imaging.BitmapFrame;
 using Windows.Media.MediaProperties;
-[assembly:System.Reflection.AssemblyVersion("2.7.0.0")]
+[assembly:System.Reflection.AssemblyVersion("2.7.1.0")]
 namespace Ryadom {
  public class Profile { public string id; public string username; public string avatar; }
  public class Session { public string token; public long expiresAt; public Profile user; }
  public class Conversation { public string avatar; public string id; public string peerId; public string username; public string lastText; public long at; public int unread; }
- public class Message { public long editedAt,deletedAt; public string kind,callStatus; public int callDuration; public long seq; public string sender; public string clientId; public string text; public long at; public string photo; public int? width; public int? height; public string voice; public int? duration; }
+ public class Message { public long editedAt,deletedAt; public string kind,callStatus; public int? callDuration; public long seq; public string sender; public string clientId; public string text; public long at; public string photo; public int? width; public int? height; public string voice; public int? duration; }
  public class PhotoResponse { public string data; public string avatar; }
  public class Result { public long changesCursor; public List<Message> updates; public string error; public string conversation; public Profile peer; public Profile user; public List<Profile> users; public List<Conversation> chats; public List<Message> messages; public long peerRead; public bool hasMore; }
  public class ApiError:Exception { public int Code; public ApiError(int code,string message):base(message){Code=code;} }

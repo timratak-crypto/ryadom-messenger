@@ -86,6 +86,6 @@ namespace Ryadom {
    var save=new Button{Content="Сохранить",Margin=new Thickness(0,14,0,0)};DockPanel.SetDock(save,Dock.Bottom);panel.Children.Add(save);var input=new TextBox{Text=message.text,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,MaxLength=4000};panel.Children.Add(input);dialog.Content=panel;
    save.Click+=async(a,e)=>{save.IsEnabled=false;bool ok=await MutateMessage(message,input.Text);save.IsEnabled=true;if(ok)dialog.Close();};dialog.Closing+=(a,e)=>{if(busy)e.Cancel=true;};dialog.ShowDialog();
   }
-  static string CallSummary(Message message,bool own){return message.callStatus=="answered"?"Разговор · "+VoiceCapture.Time(message.callDuration):own?"Исходящий вызов · Без ответа":"Вам звонили · Пропущенный вызов";}
+  static string CallSummary(Message message,bool own){return message.callStatus=="answered"?"Разговор · "+VoiceCapture.Time(message.callDuration??0):own?"Исходящий вызов · Без ответа":"Вам звонили · Пропущенный вызов";}
  }
 }

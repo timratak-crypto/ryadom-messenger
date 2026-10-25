@@ -25,6 +25,9 @@ jobs:
       - name: Compile Windows application
         shell: powershell
         run: ./windows/build.ps1
+      - name: Test message API decoding with null optional fields
+        shell: powershell
+        run: ./windows/test-api.ps1
       - name: Test call lifecycle and native transport without recording
         shell: powershell
         run: ./windows/test-calls.ps1
