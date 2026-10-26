@@ -30,15 +30,15 @@ final class VoiceAudio {
  synchronized boolean isRecording(){return worker!=null;}
  synchronized void record(Recorded callback) throws Exception {
   if(worker!=null)throw new Exception("Запись уже идёт.");
-  stopPlayback();running=true;save=true;recordedBytes=0;
+  final int noiseMode=NoisePreferences.get(context);stopPlayback();running=true;save=true;recordedBytes=0;
   worker=new Thread(()->{
-   AudioRecord recorder=null;byte[] result=null;Exception failure=null;
+   CaptureNoiseEffects effects=null;AudioRecord recorder=null;byte[] result=null;Exception failure=null;
    try{
     int minimum=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
     if(minimum<=0)throw new Exception("Микрофон не поддерживает запись.");
     recorder=new AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.MIC).setAudioFormat(new AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()).setBufferSizeInBytes(Math.max(minimum,6400)).build();
     if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new Exception("Не удалось включить микрофон.");
-    if(running)recorder.startRecording();
+    effects=new CaptureNoiseEffects(recorder.getAudioSessionId(),noiseMode);if(running)recorder.startRecording();
     ByteArrayOutputStream pcm=new ByteArrayOutputStream();byte[] block=new byte[3200];
     while(running&&pcm.size()<1920000){
      int count=recorder.read(block,0,Math.min(block.length,1920000-pcm.size()),AudioRecord.READ_BLOCKING);
@@ -46,9 +46,9 @@ final class VoiceAudio {
      if(count==0)break;
      pcm.write(block,0,count);recordedBytes=pcm.size();
     }
-    if(save){if(pcm.size()<8000)throw new Exception("Запись слишком короткая. Скажите сообщение и нажмите стоп.");result=wav(pcm.toByteArray());}
+    if(save){if(pcm.size()<8000)throw new Exception("Запись слишком короткая. Скажите сообщение и нажмите стоп.");byte[] captured=pcm.toByteArray();new NoiseFilter().process(captured,captured.length,noiseMode);result=wav(captured);}
    }catch(Exception e){if(save)failure=e;}
-   finally{running=false;if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();}synchronized(this){worker=null;}}
+   finally{running=false;if(effects!=null)effects.close();if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();}synchronized(this){worker=null;}}
    final byte[] data=result;final Exception error=failure;ui.post(()->callback.done(data,error));
   },"Ryadom microphone");worker.start();
  }

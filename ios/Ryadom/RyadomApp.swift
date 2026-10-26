@@ -211,6 +211,7 @@ import UniformTypeIdentifiers
     @Published var elapsed = 0.0
     @Published var playingID: String?
     @Published var loadingID: String?
+    private var recordingNoiseMode = 2
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     private var file: URL?
@@ -228,7 +229,7 @@ import UniformTypeIdentifiers
         finish(save: true); stopPlayback()
     }
     func start(completion: @escaping (Result<Data, Error>) -> Void) {
-        guard !capturing else { return }; stopPlayback(); capturing = true; elapsed = 0; self.completion = completion
+        guard !capturing else { return }; recordingNoiseMode = NoisePreferences.mode; stopPlayback(); capturing = true; elapsed = 0; self.completion = completion
         let attempt = UUID(); recordGeneration = attempt
         AVAudioSession.sharedInstance().requestRecordPermission { allowed in
             Task { @MainActor in
@@ -259,7 +260,7 @@ import UniformTypeIdentifiers
             do {
                 let data = try Data(contentsOf: target)
                 guard Self.seconds(data) >= 0.25, data.count <= 2 * 1024 * 1024 else { throw ChatError("Запись слишком короткая. Нажмите микрофон и скажите сообщение.") }
-                done?(.success(data))
+                done?(.success(try NoiseFilter.wav(data, mode: recordingNoiseMode)))
             } catch { done?(.failure(error)) }
         }
     }
@@ -641,6 +642,15 @@ struct MessageEditView: View {
     init(model: ChatModel, message: ChatMessage) { self.model = model; self.message = message; _text = State(initialValue: message.text) }
     var body: some View { NavigationStack { VStack(spacing: 18) { TextEditor(text: $text).frame(minHeight: 120); if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote) }; Button { Task { if await model.mutate(message, text: text) { dismiss() } } } label: { Text("Сохранить").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()).disabled(model.busy || text.utf16.count > 4000) }.padding(22).navigationTitle("Изменить сообщение").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(model.busy) } } }.interactiveDismissDisabled(model.busy) }
 }
+struct SoundSettingsView: View {
+    @AppStorage("ryadom.noise") private var mode = 2
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 22) {
+        Text("Шумоподавление").font(.title2.weight(.semibold))
+        Picker("Шумоподавление", selection: $mode) { ForEach(0..<3) { Text(NoisePreferences.names[$0]).tag($0) } }.pickerStyle(.segmented)
+        Text(NoisePreferences.hint).font(.subheadline).foregroundStyle(Look.muted)
+        Text("Сохраняется на этом устройстве. Фильтруется ваш микрофон; старые записи не меняются.").font(.caption).foregroundStyle(Look.muted)
+    }.padding(24) } }
+}
 struct SettingsView: View {
     @ObservedObject var model: ChatModel
     @AppStorage("ryadom.accent") private var accent = 0
@@ -663,6 +673,7 @@ struct SettingsView: View {
                     if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote) }
                 }.padding(24) }.tabItem { Label("Account", systemImage: "person.crop.circle") }
                 ScrollView { VStack(alignment: .leading, spacing: 18) { Text("Цвет мессенджера").font(.title2.weight(.semibold)); Text("Сохраняется на этом устройстве.").font(.caption).foregroundStyle(Look.muted); ForEach(Appearance.names.indices, id: \.self) { index in Button { accent = index } label: { HStack { Circle().fill(Color(rgb: Appearance.values[index])).frame(width: 32, height: 32); Text(Appearance.names[index]).foregroundStyle(Look.ink); Spacer(); if accent == index { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(rgb: Appearance.values[index])) } }.padding(14).background(.white, in: RoundedRectangle(cornerRadius: 18)) }.buttonStyle(.plain) } }.padding(24) }.tabItem { Label("Стиль", systemImage: "paintpalette") }
+                SoundSettingsView().tabItem { Label("Звук", systemImage: "waveform") }
             }.background(paper).tint(pine).navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() }.disabled(model.busy) } }
         }.onAppear { username = model.session?.user.username ?? ""; model.error = "" }
         .sheet(isPresented: $gallery) { GalleryPicker { result in gallery = false; guard let result else { return }; do { let data = try result.get(); guard let image = UIImage(data: data) else { throw ChatError("Не удалось открыть фото.") }; let avatar = try PhotoEncoding.jpeg(image, maxDimension: 512, maxBytes: 204800); Task { if await model.updateProfile(["action": "setAvatar", "data": avatar.base64EncodedString()]) { status = "Аватарка сохранена" } } } catch { model.error = error.localizedDescription } }.ignoresSafeArea() }

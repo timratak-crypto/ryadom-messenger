@@ -25,7 +25,7 @@ using Windows.Graphics.Imaging;
 using BitmapDecoder=System.Windows.Media.Imaging.BitmapDecoder;
 using BitmapFrame=System.Windows.Media.Imaging.BitmapFrame;
 using Windows.Media.MediaProperties;
-[assembly:System.Reflection.AssemblyVersion("2.7.1.0")]
+[assembly:System.Reflection.AssemblyVersion("2.8.0.0")]
 namespace Ryadom {
  public class Profile { public string id; public string username; public string avatar; }
  public class Session { public string token; public long expiresAt; public Profile user; }

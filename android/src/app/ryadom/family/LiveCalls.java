@@ -100,6 +100,8 @@ final class LiveCalls {
    accept=Ui.button(activity,"Принять",v->answer(),false);panel.addView(accept);
    mute=Ui.button(activity,"Микрофон",v->{},true);mute.setOnClickListener(v->{muted=!muted;Audio target=audio;if(target!=null)target.muted=muted;update();});panel.addView(mute);
    route=Ui.button(activity,"Динамик",v->{},true);route.setOnClickListener(v->{speaker=!speaker;Audio target=audio;if(target!=null){final boolean selected=speaker;audioOperations.execute(()->{if(audio==target&&!target.stopped)target.speaker(selected);});}update();});panel.addView(route);
+   Button noise=Ui.button(activity,"Шумоподавление: "+NoisePreferences.NAMES[NoisePreferences.get(activity)],v->{},true);
+   noise.setOnClickListener(v->new AlertDialog.Builder(activity).setTitle("Шумоподавление").setSingleChoiceItems(NoisePreferences.NAMES,NoisePreferences.get(activity),(d,which)->{NoisePreferences.set(activity,which);noise.setText("Шумоподавление: "+NoisePreferences.NAMES[which]);Audio target=audio;if(target!=null)audioOperations.execute(()->{if(audio==target&&!target.stopped)target.noiseMode(which);});d.dismiss();}).setNegativeButton("Закрыть",null).show());panel.addView(noise);
    Button finish=Ui.button(activity,"Завершить",v->hangup(),false);finish.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xffc65b60));panel.addView(finish);
    TextView hint=Ui.text(activity,"",12,Ui.MUTED);hint.setPadding(0,Ui.dp(activity,18),0,0);hint.setGravity(android.view.Gravity.CENTER);hint.setText("Звонок работает, пока «Рядом» открыт на обоих устройствах.");panel.addView(hint);
    dialog=new AlertDialog.Builder(activity).setView(panel).setCancelable(false).create();dialog.show();Ui.dialog(dialog,panel);ui.post(clock);
@@ -117,10 +119,11 @@ final class LiveCalls {
  interface Frames{boolean send(byte[] frame);} interface Failure{void error(String message);}
  static final class Audio {
   final ArrayBlockingQueue<byte[]> incoming=new ArrayBlockingQueue<>(6);final AudioManager manager;final Frames send;final Failure failure;
+  volatile int noiseMode;final NoiseFilter filter=new NoiseFilter();CaptureNoiseEffects effects;
   AudioRecord recorder;AudioTrack player;final AudioFocusRequest focus;AcousticEchoCanceler echo;Thread captureThread,playThread;
   volatile boolean stopped,muted;volatile long receivedBytes,sentBytes;volatile int peak;final int oldMode;final boolean oldSpeaker;
   Audio(Context context,Handler ui,Frames send,Failure failure,Runnable interrupted){
-   this.send=send;this.failure=failure;manager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);oldMode=manager.getMode();oldSpeaker=manager.isSpeakerphoneOn();
+   noiseMode=NoisePreferences.get(context);this.send=send;this.failure=failure;manager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);oldMode=manager.getMode();oldSpeaker=manager.isSpeakerphoneOn();
    AudioAttributes attrs=new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build();
    focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT).setAudioAttributes(attrs).setOnAudioFocusChangeListener(change->{if(change<0&&!stopped)interrupted.run();},ui).build();
   }
@@ -136,7 +139,7 @@ final class LiveCalls {
     if(target==null)for(AudioDeviceInfo device:devices)if(device.getType()==(enabled?AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)){target=device;break;}
     if(target!=null)manager.setCommunicationDevice(target);else manager.clearCommunicationDevice();
    }else manager.setSpeakerphoneOn(enabled);
-   enableEcho();
+   enableEcho();if(effects!=null)effects.mode(noiseMode);
   }
   static boolean external(AudioDeviceInfo device){
    int type=device.getType();return type==AudioDeviceInfo.TYPE_WIRED_HEADSET||type==AudioDeviceInfo.TYPE_WIRED_HEADPHONES||type==AudioDeviceInfo.TYPE_USB_HEADSET||type==AudioDeviceInfo.TYPE_BLUETOOTH_SCO||(android.os.Build.VERSION.SDK_INT>=31&&type==AudioDeviceInfo.TYPE_BLE_HEADSET);
@@ -146,7 +149,9 @@ final class LiveCalls {
    AcousticEchoCanceler effect=echo;if(effect==null)return;
    try{if(effect.hasControl())effect.setEnabled(true);}catch(RuntimeException ignored){}
   }
+  void noiseMode(int mode){noiseMode=mode;if(effects!=null)effects.mode(mode);}
   void releaseRecorder(){
+   if(effects!=null){effects.close();effects=null;}
    if(echo!=null){try{echo.release();}catch(RuntimeException ignored){}echo=null;}
    if(recorder!=null){try{recorder.stop();}catch(RuntimeException ignored){}try{recorder.release();}catch(RuntimeException ignored){}recorder=null;}
   }
@@ -155,6 +160,7 @@ final class LiveCalls {
     recorder=new AudioRecord.Builder().setAudioSource(source).setAudioFormat(new AudioFormat.Builder().setSampleRate(16000).setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()).setBufferSizeInBytes(buffer).build();
     if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new Exception("Не удалось открыть микрофон.");
     try{if(AcousticEchoCanceler.isAvailable()){echo=AcousticEchoCanceler.create(recorder.getAudioSessionId());enableEcho();}}catch(RuntimeException ignored){}
+    effects=new CaptureNoiseEffects(recorder.getAudioSessionId(),noiseMode);
     recorder.startRecording();
     if(recorder.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new Exception("Микрофон не начал запись.");
    }catch(Exception error){releaseRecorder();throw error;}
@@ -180,7 +186,7 @@ final class LiveCalls {
      int n=recorder.read(samples,0,samples.length,AudioRecord.READ_BLOCKING);
      if(n<0)throw new Exception("Микрофон отключился ("+n+").");
      if(stopped)break;if(n==0){Thread.sleep(5);continue;}
-     peak=CallPcm.peak(samples,n);
+     peak=CallPcm.peak(samples,n);filter.process(samples,n,noiseMode);
      if(!muted){byte[] frame=CallPcm.encode(samples,n);if(send.send(frame))sentBytes+=frame.length;}
     }}catch(Exception e){if(!stopped)failure.error(e.getMessage()==null?"Запись прервалась.":e.getMessage());}
    },"ryadom-call-mic");

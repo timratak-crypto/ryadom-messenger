@@ -69,7 +69,7 @@ namespace Ryadom {
   [DllImport("winmm.dll")] static extern uint waveInClose(IntPtr h);
   [DllImport("winmm.dll")] static extern uint waveOutClose(IntPtr h);
   readonly ConcurrentQueue<byte[]> incoming=new ConcurrentQueue<byte[]>(); volatile bool stopped; public volatile bool Muted;
-  readonly uint outputDevice;long received,played;public long ReceivedBytes{get{return Interlocked.Read(ref received);}}public long PlayedBytes{get{return Interlocked.Read(ref played);}}public volatile int InputPeak,PeerPeak;
+  readonly NoiseFilter noise=new NoiseFilter();readonly uint outputDevice;long received,played;public long ReceivedBytes{get{return Interlocked.Read(ref received);}}public long PlayedBytes{get{return Interlocked.Read(ref played);}}public volatile int InputPeak,PeerPeak;
   public CallAudio(uint outputDevice=uint.MaxValue){this.outputDevice=outputDevice;}
   public static int Peak(byte[] data){int peak=0;for(int i=0;i+1<data.Length;i+=2)peak=Math.Max(peak,Math.Abs((int)(short)(data[i]|data[i+1]<<8)));return peak;}
   public void Enqueue(byte[] data){if(!stopped&&data.Length>0&&data.Length<=6400&&data.Length%2==0){Interlocked.Add(ref received,data.Length);PeerPeak=Peak(data);byte[] old;if(incoming.Count>=6)incoming.TryDequeue(out old);incoming.Enqueue(data);}}
@@ -91,7 +91,7 @@ namespace Ryadom {
     Check(waveInStart(input));int next=0;
     while(!stopped){
      var ptr=ins[next];var h=(Header)Marshal.PtrToStructure(ptr,typeof(Header));
-     if((h.flags&1)!=0){if(h.recorded>0){var data=new byte[h.recorded];Marshal.Copy(h.data,data,0,data.Length);InputPeak=Peak(data);if(!Muted)send(data);}Check(waveInAddBuffer(input,ptr,size));next=(next+1)%ins.Count;}
+     if((h.flags&1)!=0){if(h.recorded>0){var data=new byte[h.recorded];Marshal.Copy(h.data,data,0,data.Length);InputPeak=Peak(data);noise.Process(data,data.Length,NoisePreferences.Mode);if(!Muted)send(data);}Check(waveInAddBuffer(input,ptr,size));next=(next+1)%ins.Count;}
      foreach(var p in outs){var o=(Header)Marshal.PtrToStructure(p,typeof(Header));byte[] data;if((o.flags&16)==0&&incoming.TryDequeue(out data)){Marshal.Copy(data,0,o.data,data.Length);o.length=(uint)data.Length;Marshal.StructureToPtr(o,p,false);Check(waveOutWrite(output,p,size));Interlocked.Add(ref played,data.Length);}}
      Thread.Sleep(5);
     }
@@ -160,6 +160,8 @@ namespace Ryadom {
     panel.Children.Add(new TextBlock{Text="Динамик",Margin=new Thickness(0,0,0,4)});
     var outputs=new ComboBox{Margin=new Thickness(0,0,0,14),Padding=new Thickness(8)};outputs.Items.Add("По умолчанию в Windows");foreach(var name in CallAudio.Outputs())outputs.Items.Add(name);outputs.SelectedIndex=callOutputDevice==uint.MaxValue?0:(int)callOutputDevice+1;if(outputs.SelectedIndex<0)outputs.SelectedIndex=0;
     outputs.SelectionChanged+=(a,b)=>{callOutputDevice=outputs.SelectedIndex<=0?uint.MaxValue:(uint)(outputs.SelectedIndex-1);if(callState=="active")StartCallAudio();};panel.Children.Add(outputs);
+    panel.Children.Add(new TextBlock{Text="Шумоподавление",Margin=new Thickness(0,0,0,4)});
+    var noiseChoice=new ComboBox{ItemsSource=NoisePreferences.Names,SelectedIndex=NoisePreferences.Mode,Margin=new Thickness(0,0,0,14),Padding=new Thickness(8),ToolTip=NoisePreferences.Hint};noiseChoice.SelectionChanged+=(a,b)=>{try{NoisePreferences.Save(noiseChoice.SelectedIndex);}catch{Status("Не удалось сохранить настройку звука.",true);}};panel.Children.Add(noiseChoice);
     callAccept=new Button{Content="Принять",Padding=new Thickness(12),Margin=new Thickness(0,0,0,12)};callAccept.Click+=(a,b)=>{if(calls!=null&&callSession.Answer()){calls.Send(new{type="accept",id=callId});ShowCall();}};panel.Children.Add(callAccept);
     callMute=new Button{Content="Выключить микрофон",Padding=new Thickness(12),Margin=new Thickness(0,0,0,12)};callMute.Click+=(a,b)=>{if(liveAudio!=null){liveAudio.Muted=!liveAudio.Muted;callMute.Content=liveAudio.Muted?"Включить микрофон":"Выключить микрофон";}};panel.Children.Add(callMute);
     callRetry=new Button{Content="Позвонить снова",Padding=new Thickness(12),Margin=new Thickness(0,0,0,12)};callRetry.Click+=(a,b)=>DialCall(callPeer);panel.Children.Add(callRetry);

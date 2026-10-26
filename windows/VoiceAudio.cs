@@ -21,7 +21,7 @@ namespace Ryadom {
   public void Stop(bool save){discard=!save;stopped=true;}
   static void Check(uint status){if(status!=0)throw new Exception("Не удалось включить микрофон. Проверьте его подключение и разрешение для классических приложений в настройках Windows → Конфиденциальность → Микрофон.");}
   public byte[] Record(){
-   IntPtr handle=IntPtr.Zero;var buffers=new List<IntPtr>();var prepared=new List<IntPtr>();var pointers=new List<IntPtr>();uint size=(uint)Marshal.SizeOf(typeof(Header));
+   int noiseMode=NoisePreferences.Mode;IntPtr handle=IntPtr.Zero;var buffers=new List<IntPtr>();var prepared=new List<IntPtr>();var pointers=new List<IntPtr>();uint size=(uint)Marshal.SizeOf(typeof(Header));
    using(var pcm=new MemoryStream()){
     try{
      if(stopped)return null;
@@ -41,7 +41,7 @@ namespace Ryadom {
       var header=(Header)Marshal.PtrToStructure(buffers[(next+i)%buffers.Count],typeof(Header));
       int count=Math.Min((int)header.recorded,1920000-(int)pcm.Length);if((header.flags&1)!=0&&count>0){Marshal.Copy(header.data,block,0,count);pcm.Write(block,0,count);}
      }
-     if(discard)return null;if(pcm.Length<8000)throw new Exception("Запись слишком короткая. Скажите сообщение и нажмите стоп.");return Encode(pcm.ToArray());
+     if(discard)return null;if(pcm.Length<8000)throw new Exception("Запись слишком короткая. Скажите сообщение и нажмите стоп.");var captured=pcm.ToArray();new NoiseFilter().Process(captured,captured.Length,noiseMode);return Encode(captured);
     }finally{
      if(handle!=IntPtr.Zero){waveInReset(handle);foreach(var ptr in prepared)waveInUnprepareHeader(handle,ptr,size);waveInClose(handle);}
      foreach(var ptr in buffers)Marshal.FreeHGlobal(ptr);foreach(var ptr in pointers)Marshal.FreeHGlobal(ptr);

@@ -71,6 +71,9 @@ final class CallAudioEngine {
     private let playback = DispatchQueue(label: "app.ryadom.call.playback")
     private var running = false, muted = false, tapped = false
     private var queued = 0
+    private let filter = NoiseFilter()
+    private var noiseMode = NoisePreferences.mode
+    func setNoise(_ mode: Int) { lock.lock(); noiseMode = mode; lock.unlock(); if tapped { engine.inputNode.isVoiceProcessingAGCEnabled = mode != 2 } }
     private let renderFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     func mute(_ value: Bool) { lock.lock(); muted = value; lock.unlock() }
     func start(send: @escaping (Data) -> Void) throws {
@@ -80,6 +83,8 @@ final class CallAudioEngine {
         do {
             let input = engine.inputNode
             try input.setVoiceProcessingEnabled(true)
+            input.isVoiceProcessingBypassed = false
+            input.isVoiceProcessingAGCEnabled = noiseMode != 2
             let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0,
                   let pcm = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true),
@@ -88,7 +93,7 @@ final class CallAudioEngine {
             lock.lock(); running = true; lock.unlock()
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 guard let self else { return }
-                self.lock.lock(); let enabled = self.running && !self.muted; self.lock.unlock(); guard enabled else { return }
+                self.lock.lock(); let enabled = self.running && !self.muted; let mode = self.noiseMode; self.lock.unlock(); guard enabled else { return }
                 let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16000 / format.sampleRate) + 32)
                 guard let output = AVAudioPCMBuffer(pcmFormat: pcm, frameCapacity: capacity) else { return }
                 var supplied = false, error: NSError?
@@ -97,7 +102,7 @@ final class CallAudioEngine {
                     supplied = true; status.pointee = .haveData; return buffer
                 }
                 if error == nil, output.frameLength > 0, let pointer = output.int16ChannelData?[0] {
-                    let data = Data(bytes: pointer, count: Int(output.frameLength) * 2)
+                    let data = self.filter.process(Data(bytes: pointer, count: Int(output.frameLength) * 2), mode: mode)
                     // Some audio routes deliver larger taps than requested.
                     for offset in stride(from: 0, to: data.count, by: 1280) { send(data.subdata(in: offset..<min(offset + 1280, data.count))) }
                 }
@@ -180,6 +185,7 @@ final class CallAudioEngine {
             if allowed { action() } else { self.note = "Разрешите микрофон в Настройках → Рядом → Микрофон." }
         } }
     }
+    func setNoise(_ mode: Int) { audio?.setNoise(mode) }
     func toggleMute() { muted.toggle(); audio?.mute(muted) }
     func toggleSpeaker() { do { let next = !speaker; try AVAudioSession.sharedInstance().overrideOutputAudioPort(next ? .speaker : .none); speaker = next } catch { note = "Не удалось переключить динамик." } }
     private func event(_ value: [String: Any]) {
@@ -221,18 +227,21 @@ final class CallAudioEngine {
 
 struct CallView: View {
     @AppStorage("ryadom.accent") private var accentIndex = 0
+    @AppStorage("ryadom.noise") private var noiseMode = 2
     @ObservedObject var calls: CallsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
     var body: some View {
-        VStack(spacing: 24) {
-            Text("ГОЛОСОВОЙ ЗВОНОК").font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(Color.white.opacity(0.65)).padding(.top, 30)
-            Spacer()
-            ZStack { Circle().stroke(Color.white.opacity(0.10), lineWidth: 1).frame(width: 188, height: 188).scaleEffect(pulse && !reduceMotion ? 1.08 : 1); Circle().fill(Color.white.opacity(0.06)).frame(width: 154, height: 154); AvatarView(name: calls.peer, size: 110) }
+        GeometryReader { geometry in
+        let compact = geometry.size.height < 740
+        VStack(spacing: compact ? 12 : 20) {
+            ScrollView(showsIndicators: false) { VStack(spacing: compact ? 12 : 20) {
+            Text("ГОЛОСОВОЙ ЗВОНОК").font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(Color.white.opacity(0.65)).padding(.top, compact ? 4 : 20)
+            ZStack { Circle().stroke(Color.white.opacity(0.10), lineWidth: 1).frame(width: compact ? 128 : 188, height: compact ? 128 : 188).scaleEffect(pulse && !reduceMotion ? 1.08 : 1); Circle().fill(Color.white.opacity(0.06)).frame(width: compact ? 112 : 154, height: compact ? 112 : 154); AvatarView(name: calls.peer, size: compact ? 82 : 110) }
             Text("@\(calls.peer)").font(.system(.largeTitle, design: .rounded).weight(.semibold)).foregroundStyle(.white)
             if calls.phase == "active" { Text(calls.started, style: .timer).font(.title2).monospacedDigit().foregroundStyle(Color(rgb: 0xB8DBCD)) }
             else { Text(calls.phase == "incoming" ? "Входящий звонок" : calls.phase == "ringing" ? "Вызываем…" : "Подключаемся…").font(.title3).foregroundStyle(Color(rgb: 0xB8DBCD)) }
-            Spacer()
+            }.frame(maxWidth: .infinity) }.frame(maxHeight: .infinity)
             if calls.phase == "incoming" { Button { calls.accept() } label: { Label("Принять", systemImage: "phone.fill").frame(maxWidth: .infinity) }.buttonStyle(SoftPressStyle()) }
             if calls.phase == "active" {
                 HStack(spacing: 14) {
@@ -240,11 +249,16 @@ struct CallView: View {
                     Button { calls.toggleSpeaker() } label: { VStack(spacing: 10) { Image(systemName: calls.speaker ? "speaker.wave.2.fill" : "speaker").font(.title2); Text(calls.speaker ? "Громкая связь" : "Динамик").font(.caption2) }.frame(maxWidth: .infinity).padding(18).background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22)) }
                 }.buttonStyle(.plain).foregroundStyle(.white)
             }
+            VStack(spacing: 8) {
+                Text("Шумоподавление").font(.caption).foregroundStyle(.white)
+                Picker("Шумоподавление", selection: $noiseMode) { ForEach(0..<3) { Text(NoisePreferences.names[$0]).tag($0) } }.pickerStyle(.segmented).colorScheme(.dark)
+            }.onChange(of: noiseMode) { calls.setNoise($0) }
             Button { calls.hangup() } label: { Label("Завершить", systemImage: "phone.down.fill").font(.headline).frame(maxWidth: .infinity).padding(18).foregroundStyle(.white).background(Color(rgb: 0xC65B60), in: RoundedRectangle(cornerRadius: 20)) }.buttonStyle(.plain)
             if !calls.note.isEmpty { Text(calls.note).font(.footnote).foregroundStyle(.white) }
             Text("Оставьте приложение открытым во время звонка").font(.caption2).foregroundStyle(Color.white.opacity(0.5)).multilineTextAlignment(.center)
-        }.padding(28).background(LinearGradient(colors: [Appearance.deep, Color.black], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).tint(pine)
+        }.padding(compact ? 18 : 28).background(LinearGradient(colors: [Appearance.deep, Color.black], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()).tint(pine)
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true; if !reduceMotion { withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) { pulse = true } } }
+        }
         .interactiveDismissDisabled()
     }
 }

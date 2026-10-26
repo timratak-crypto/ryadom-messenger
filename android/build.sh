@@ -22,10 +22,11 @@ for lib in build/libs/*.jar; do zip -dq "$lib" 'META-INF/versions/*' 'module-inf
 find src build/generated -name '*.java' > build/sources.txt
 javac -encoding UTF-8 -source 8 -target 8 -classpath "$PLATFORM:build/libs/*" -d build/classes @build/sources.txt
 mkdir -p build/test-classes
-javac -encoding UTF-8 -source 8 -target 8 -classpath "$PLATFORM:build/classes" -d build/test-classes tests/VoiceAudioTest.java tests/CallAudioTest.java tests/NotificationStateTest.java
+javac -encoding UTF-8 -source 8 -target 8 -classpath "$PLATFORM:build/classes" -d build/test-classes tests/VoiceAudioTest.java tests/CallAudioTest.java tests/NotificationStateTest.java tests/NoiseFilterTest.java
 java -classpath "$PLATFORM:build/classes:build/test-classes" app.ryadom.family.VoiceAudioTest
 java -classpath "$PLATFORM:build/classes:build/test-classes" app.ryadom.family.CallAudioTest
 java -classpath "$PLATFORM:build/classes:build/test-classes" app.ryadom.family.NotificationStateTest
+java -classpath "$PLATFORM:build/classes:build/test-classes" app.ryadom.family.NoiseFilterTest
 jar cf build/classes.jar -C build/classes .
 "$TOOLS/d8" --lib "$PLATFORM" --min-api 26 --output build/dex build/classes.jar build/libs/*.jar
 (cd build/dex && zip -q ../unsigned.apk classes*.dex)

@@ -34,7 +34,7 @@ public static class DesignPreview {
   Field(app,"messages",new List<Message>{new Message{seq=1,sender="me",text="Изменённое сообщение",editedAt=now,at=now-300000},new Message{seq=2,sender="other",text="Сообщение удалено",deletedAt=now,at=now-240000},new Message{seq=3,sender="me",kind="call",callStatus="answered",callDuration=125,at=now-180000},new Message{seq=4,sender="other",kind="call",callStatus="missed",at=now}});
   Call(app,"Render");Save(w,Path.Combine(args[0],"messages-red.png"),1180,780);
   var settings=(Window)Call(app,"BuildSettings");Save(settings,Path.Combine(args[0],"settings-account.png"),540,640);
-  var dock=(DockPanel)settings.Content;var tabs=(TabControl)dock.Children[1];tabs.SelectedIndex=1;Save(settings,Path.Combine(args[0],"settings-style.png"),540,640);settings.Close();
+  var dock=(DockPanel)settings.Content;var tabs=(TabControl)dock.Children[1];tabs.SelectedIndex=1;Save(settings,Path.Combine(args[0],"settings-style.png"),540,640);tabs.SelectedIndex=2;Save(settings,Path.Combine(args[0],"settings-sound.png"),540,640);settings.Close();
   var edited=new Message{seq=1,sender="me",text="Правка",editedAt=now+1,at=now};
   Field(app,"cursor",(long)4);Field(app,"changesCursor",(long)0);
   if(!(bool)Call(app,"ApplyFeed",new Result{messages=new List<Message>(),updates=new List<Message>{edited,new Message{seq=900,editedAt=now}},changesCursor=100}))throw new Exception("Edit did not refresh UI");
